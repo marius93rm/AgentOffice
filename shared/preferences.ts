@@ -1,6 +1,5 @@
 import { defineSettings } from "@getpaseo/plugin";
 import { z } from "zod";
-import { resultNotice } from "./inbox";
 
 export const ROOM_THEMES = ["auto", "studio", "library", "workshop"] as const;
 export const DECOR_LEVELS = ["minimal", "balanced", "full"] as const;
@@ -44,16 +43,6 @@ export const lobbyPreferences = defineSettings({
     effects: z.boolean().default(true),
     pet: z.boolean().default(false),
     privacy: z.boolean().default(false),
-  }),
-});
-
-export const completionInbox = defineSettings({
-  id: "completions",
-  scope: "host",
-  version: 1,
-  schema: z.object({
-    read: z.record(z.string(), z.string()).default({}),
-    observed: z.record(z.string(), resultNotice).default({}),
   }),
 });
 

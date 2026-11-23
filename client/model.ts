@@ -81,7 +81,13 @@ export function nextAgeChange(iso: string, now: number): number | null {
 }
 
 export function displayTitle(agent: PaseoAgent): string {
-  const title = agent.title?.trim();
+  const title = agent.title
+    ?.trim()
+    .replace(/^\s{0,3}#{1,6}\s+/, "")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/(?:\*\*|__|~~|`)/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
   if (title) return title;
   return `${agent.provider} · ${agent.id.slice(0, 7)}`;
 }

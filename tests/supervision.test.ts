@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DEMO_QUESTION, DEMO_START, demoScenario, demoBubbles } from "../client/demo-model";
 import { buildReplay, createJournal, type ReplayEvent } from "../client/replay-model";
 import { metricsOf } from "../client/metrics";
-import { createPrivacy, privateBubbles, privateExchanges, privateOperations, privateResult, privateTasks } from "../client/privacy";
+import { createPrivacy, privateBubbles, privateExchanges, privateOperations, privateTasks } from "../client/privacy";
 import { questionsOf } from "../client/questions";
 import { buildForest, crewState, groupByWorkspace } from "../client/model";
 import { createOfficeLayoutCache, layoutOffice, presences } from "../client/office-model";
@@ -78,8 +78,7 @@ describe("metrics and privacy", () => {
     const operations = privateOperations(new Map([["dev", { kind: "command", source: "tool", phase: "running", agentId: "dev", id: "safe",
       at: START, tool: secret, resource: secret }]]));
     const tasks = privateTasks([{ title: secret, state: "planned", id: "safe", agentId: "dev", workspaceId: "ws-a", at: START, source: "timeline.todo" }]);
-    const result = privateResult({ agentId: "dev", key: "safe", text: secret, cut: true, at: iso(START) });
-    expect(JSON.stringify([hidden, ...bubbles.values(), exchanges, ...operations.values(), tasks, result])).not.toContain(secret);
+    expect(JSON.stringify([hidden, ...bubbles.values(), exchanges, ...operations.values(), tasks])).not.toContain(secret);
     expect(hidden.title).toBe(aliases.agentName(live.id));
     expect(aliases.workspace("hidden-id").name).toBe("Room 01");
     expect(hidden.pendingPermissions[0]?.input).toEqual({});

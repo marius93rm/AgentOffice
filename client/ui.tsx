@@ -100,6 +100,7 @@ export function Button({
   size = "sm",
   icon,
   disabled,
+  hitSlop,
   style,
 }: {
   theme: PluginTheme;
@@ -111,6 +112,7 @@ export function Button({
   size?: ButtonSize;
   icon?: string;
   disabled?: boolean;
+  hitSlop?: number;
   style?: StyleProp<ViewStyle>;
 }) {
   const { colors } = theme;
@@ -130,6 +132,7 @@ export function Button({
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ disabled: disabled ?? false }}
       disabled={disabled}
+      hitSlop={hitSlop}
       onPress={onPress}
       style={pressStyle(({ pressed, hovered }) => [
         {

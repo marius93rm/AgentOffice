@@ -93,7 +93,6 @@ export function Detail({
   onOpen,
   onMessage,
   onReview,
-  onShowResult,
   onMore,
   pending,
   busy,
@@ -122,7 +121,6 @@ export function Detail({
   onOpen: () => void;
   onMessage: () => void;
   onReview: (requestId: string) => void;
-  onShowResult?: () => void;
   onMore: () => void;
   pending: readonly PaseoRequest[];
   busy: boolean;
@@ -142,8 +140,7 @@ export function Detail({
   const primary = first ? {
     label: isQuestion(first) ? "Answer question" : "Review permission",
     icon: isQuestion(first) ? "MessageSquare" : "ShieldQuestion", onPress: () => onReview(first.id),
-  } : onShowResult ? { label: "View result", icon: "CircleCheck", onPress: onShowResult }
-    : !privateMode ? { label: "Message agent", icon: "MessageSquare", onPress: onMessage }
+  } : !privateMode ? { label: "Message agent", icon: "MessageSquare", onPress: onMessage }
     : canOpen ? { label: "Open in Paseo", icon: "ArrowUpRight", onPress: onOpen } : null;
   const actions = (
     <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 2 }}>
@@ -193,7 +190,7 @@ export function Detail({
             <Text style={{ color: stateColor(theme, node.state), fontWeight: "600" }}>{STATE_LABEL[node.state]}</Text>
             {secondary ? ` · ${secondary}` : ""}
           </Muted>
-          <Muted theme={theme} size={13} numberOfLines={1}>{observation.label}</Muted>
+          {operation ? <Muted theme={theme} size={13} numberOfLines={1}>{observation.label}</Muted> : null}
           {observation.freshness ? <Muted theme={theme} size={12} numberOfLines={1}>{observation.freshness}</Muted> : null}
           {first ? <Muted theme={theme} size={13} numberOfLines={1}>{requestTitle(first)}</Muted> : null}
         </View>

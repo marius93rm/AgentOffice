@@ -100,8 +100,8 @@ export function operationSummary(operation: Operation | undefined, live: boolean
   const fallbackTime = fallbackAt && Number.isFinite(Date.parse(fallbackAt)) ? fallbackAt : null;
   const iso = operationAt ?? fallbackTime;
   const age = iso ? formatAge(iso, now) : null;
-  const title = operation ? operationTitle(operation) : "Activity details unavailable";
-  const freshness = live ? "Live timeline" : operationAt ? "Last observed" : fallbackTime ? "Agent update" : null;
+  const title = operation ? operationTitle(operation) : "No recent activity";
+  const freshness = live ? "Live" : operationAt ? "Last observed" : fallbackTime ? "Updated" : null;
   const label = operation?.phase === "running" || !operation ? title
     : [title, OPERATION_PHASE[operation.phase]].join(" · ");
   return { label, freshness: [freshness, age === "now" ? "just now" : age ? age + " ago" : null].filter(Boolean).join(" · "), iso };

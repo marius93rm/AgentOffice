@@ -1,21 +1,17 @@
 import type { PluginTheme } from "@getpaseo/plugin";
-import { openExternalUrl, useRpc } from "@getpaseo/plugin/client";
 import { copyText, Icon, TextInput, useToast } from "@getpaseo/plugin/client/react-native";
 import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { resultDetail, type ResultNotice } from "../shared/inbox";
 import { BREAK_PACES, DECOR_LEVELS, DEFAULT_ROOM, FLOOR_STYLES, LIGHTING_MODES, MOTION_MODES, ROOM_COLORS,
   ROOM_OBJECTS, ROOM_THEMES, WALL_STYLES, roomPreset, type LobbyPreferences, type MotionMode, type RoomSetting } from "../shared/preferences";
-import { readableText } from "./chat-model";
 import { permissionKey, type InboxStatus } from "./inbox-model";
 import { displayTitle, formatAge, STATE_LABEL, type CrewNode, type CrewState } from "./model";
 import { resolvedRoomTheme } from "./office-model";
 import { officeLight } from "./lighting";
 import { RoomPreview } from "./room-preview";
-import type { PaseoAgent, PaseoApi } from "./paseo-types";
+import type { PaseoAgent } from "./paseo-types";
 import { isQuestion, requestTitle } from "./questions";
 import { Button, Chip, IconButton, Muted, pressStyle, radius, space, stateColor } from "./ui";
-import { useChat } from "./use-chat";
 import type { PendingRequest } from "./use-inbox";
 
 export function SheetRow({ theme, title, subtitle, icon, tone, onPress, selected }: {
@@ -120,111 +116,6 @@ export function RequestsSheet({ theme, entries, now, workspaceName, complete, ne
   );
 }
 
-export function ResultsSheet({ theme, unread, seen, showSeen, onViewChange, agents, now, workspaceName, scopeName,
-  complete, writable, onReadAll, onPick }: {
-  theme: PluginTheme;
-  unread: readonly ResultNotice[];
-  seen: readonly ResultNotice[];
-  showSeen: boolean;
-  onViewChange: (showSeen: boolean) => void;
-  agents: ReadonlyMap<string, PaseoAgent>;
-  now: number;
-  workspaceName: (agent: PaseoAgent) => string | null;
-  scopeName: string;
-  complete: boolean;
-  writable: boolean;
-  onReadAll: () => void;
-  onPick: (result: ResultNotice) => void;
-}) {
-  const entries = showSeen ? seen : unread;
-  const markLabel = unread.length === 1 ? "Mark 1 result as seen" : `Mark ${unread.length} results as seen`;
-  return (
-    <View style={{ gap: space.sm }}>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.xs }}>
-        <Chip theme={theme} touch label="To see" count={unread.length} selected={!showSeen} onPress={() => onViewChange(false)} />
-        <Chip theme={theme} touch label="Seen" count={seen.length} selected={showSeen} onPress={() => onViewChange(true)} />
-      </View>
-      {!showSeen && unread.length > 0 ? (
-        <Button theme={theme} size="touch" variant="outline" label={`${markLabel} · ${scopeName}`} icon="CheckCheck"
-          disabled={!writable} onPress={onReadAll} />
-      ) : null}
-      {entries.length === 0 && complete ? <Muted theme={theme} size={15}>
-        {showSeen ? "No seen results for these agents yet." : "You’re caught up with completed work."}
-      </Muted> : null}
-      {entries.map((result) => {
-        const agent = agents.get(result.agentId);
-        if (!agent) return null;
-        return <SheetRow key={result.agentId} theme={theme} title={displayTitle(agent)}
-          subtitle={[workspaceName(agent), formatAge(result.at, now), result.text.split("\n").find((line) => line.trim())?.slice(0, 100)].filter(Boolean).join(" · ")}
-          icon="CircleCheck" tone={theme.colors.statusSuccess} onPress={() => onPick(result)} />;
-      })}
-    </View>
-  );
-}
-
-function resultLinks(text: string): string[] {
-  const urls = text.match(/https?:\/\/[^\s<>`"')\]]+/g) ?? [];
-  return [...new Set(urls.map((url) => url.replace(/[.,;!?]+$/, "")))].slice(0, 10);
-}
-
-export function ResultSheet({ theme, paseo, result, agent, now, shown, saving, error, onOpen, onRead, onMessage, onLocate }: {
-  theme: PluginTheme;
-  paseo: PaseoApi;
-  result: ResultNotice;
-  agent: PaseoAgent;
-  now: number;
-  shown: boolean;
-  saving: boolean;
-  error: string | null;
-  onOpen: (() => void) | null;
-  onRead: ((body: string) => void) | null;
-  onMessage: (() => void) | null;
-  onLocate: () => void;
-}) {
-  const fallback = result.key === result.at && !result.text;
-  const chat = useChat(paseo, agent.id, "ready", shown && fallback);
-  const load = useRpc(resultDetail);
-  const [detail, setDetail] = useState<ResultNotice | null>(null);
-  const [loading, setLoading] = useState(false);
-  useEffect(() => {
-    if (!shown || !result.cut || fallback) return;
-    let live = true;
-    setLoading(true);
-    void load({ agentId: agent.id, key: result.key }).then((detail) => {
-      if (live) setDetail(detail);
-    }).catch(() => {}).finally(() => { if (live) setLoading(false); });
-    return () => { live = false; };
-  }, [load, agent.id, result.key, result.cut, shown, fallback]);
-  const last = fallback ? chat.state.items.findLast((entry) => entry.kind === "assistant" && entry.text.trim()) : undefined;
-  const body = (detail ?? result).text || (last?.kind === "assistant" ? last.text : "");
-  const links = resultLinks(body);
-  const toast = useToast();
-  return (
-    <View style={{ gap: space.md }}>
-      <Text accessibilityRole="header" style={{ color: theme.colors.foreground, fontSize: 17, lineHeight: 23, fontWeight: "600" }}>{displayTitle(agent)}</Text>
-      <Muted theme={theme} size={13}>Finished {formatAge(result.at, now) === "now" ? "just now" : formatAge(result.at, now) + " ago"}</Muted>
-      {body ? (
-        <Text selectable style={{ color: theme.colors.foreground, fontSize: 15, lineHeight: 23 }}>{readableText(body)}</Text>
-      ) : (
-        <Muted theme={theme} size={14}>
-          {fallback && chat.phase === "loading" ? "Loading the last reply…" : "This turn has no text preview."}
-        </Muted>
-      )}
-      {loading ? <Muted theme={theme}>Loading the full reply…</Muted> : null}
-      {body && !loading && ((detail ?? result).cut || (last?.kind === "assistant" && last.cut)) ? <Muted theme={theme}>The reply continues in the agent chat.</Muted> : null}
-      {links.map((url) => (
-        <SheetRow key={url} theme={theme} title={url.replace(/^https?:\/\//, "")} icon="ExternalLink"
-          onPress={() => void openExternalUrl(url).catch(() => toast.error("Could not open the link"))} />
-      ))}
-      {error ? <Muted theme={theme}>{error}</Muted> : null}
-      {onRead ? <Button theme={theme} size="touch" variant="default" label="Mark as seen" disabled={saving} onPress={() => onRead(body)} /> : null}
-      {onMessage ? <Button theme={theme} size="touch" variant={onRead ? "outline" : "default"} icon="MessageSquare" label="Message agent" onPress={onMessage} /> : null}
-      {onOpen ? <Button theme={theme} size="touch" variant="outline" label="Open agent chat" onPress={onOpen} /> : null}
-      <Button theme={theme} size="touch" variant="ghost" icon="Map" label="Show on map" onPress={onLocate} />
-    </View>
-  );
-}
-
 export interface RoomEntry {
   id: string;
   name: string;
@@ -293,7 +184,7 @@ function Choices<Value extends keyof typeof captions>({ theme, label, values, se
 }
 
 type EnvironmentSettings = Pick<LobbyPreferences, "lighting" | "ambient" | "effects" | "pet">;
-const ENVIRONMENT_SWITCHES = { ambient: "Idle activities", effects: "Lighting and result effects", pet: "Office cat" } as const;
+const ENVIRONMENT_SWITCHES = { ambient: "Idle activities", effects: "Lighting and completion effects", pet: "Office cat" } as const;
 
 export function OfficeSettings({ theme, motion, setMotion, room, initial, saveRoom, writable, error, onRooms, onDemo, environment, onEnvironment }: {
   theme: PluginTheme;

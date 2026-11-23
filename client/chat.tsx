@@ -1,8 +1,7 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { Icon, ScrollView } from "@getpaseo/plugin/client/react-native";
-import * as hostUi from "@getpaseo/plugin/client/react-native";
 import type { PaseoApi } from "./paseo-types";
-import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Pressable,
   Text,
@@ -36,32 +35,120 @@ const TOOL_ICON: Record<string, string> = {
   canceled: "Ban",
 };
 
-type RevealPhase = "streaming" | "complete";
-type StreamedTextComponent = ComponentType<{ text: string; phase: RevealPhase; selectable?: boolean; style?: StyleProp<TextStyle> }>;
+function conciseToolSummary(summary: string): string {
+  const script = summary.match(/^(python(?:\d+(?:\.\d+)?)?|node|ruby|perl|php)\s+-\s*<</i)?.[1];
+  return script ? `${script} script` : summary;
+}
 
-/**
- * Hosts up to 0.12.x export `useRevealedText`; hosts from Paseo #7474 on export a `StreamedText`
- * component instead and drop the hook. Pick at load, once, so the hook is never called conditionally.
- */
-const host = hostUi as unknown as {
-  StreamedText?: StreamedTextComponent;
-  useRevealedText?: (text: string, phase: RevealPhase) => string;
-  Markdown?: ComponentType<{ children: string }>;
-};
-const HostStreamedText = typeof host.StreamedText === "function" ? host.StreamedText : null;
-const useRevealedText = typeof host.useRevealedText === "function" ? host.useRevealedText : (text: string) => text;
+type MessageBlock =
+  | { kind: "paragraph" | "code" | "quote"; text: string }
+  | { kind: "heading"; text: string; level: number }
+  | { kind: "list"; text: string; marker: string };
 
-/** The text being written appears as it streams; anything finished, or with less motion asked for, is shown whole. */
-function AssistantText({ theme, text, streaming, roomy }: { theme: PluginTheme; text: string; streaming: boolean; roomy: boolean }) {
-  const phase: RevealPhase = streaming ? "streaming" : "complete";
-  const style: StyleProp<TextStyle> = { color: theme.colors.foreground, fontSize: roomy ? 15 : font.base, lineHeight: roomy ? 23 : 19 };
-  const shown = useRevealedText(text, phase);
-  if (roomy && !streaming && host.Markdown) return <host.Markdown>{text}</host.Markdown>;
-  if (HostStreamedText) return <HostStreamedText text={text} phase={phase} selectable style={style} />;
+function assistantBlocks(text: string): MessageBlock[] {
+  const blocks: MessageBlock[] = [];
+  let paragraph: string[] = [];
+  let code: string[] = [];
+  let inCode = false;
+  const flushParagraph = () => {
+    if (paragraph.length) blocks.push({ kind: "paragraph", text: paragraph.join(" ").trim() });
+    paragraph = [];
+  };
+
+  for (const line of text.replace(/\r/g, "").split("\n")) {
+    if (/^\s*```/.test(line)) {
+      flushParagraph();
+      if (inCode) {
+        blocks.push({ kind: "code", text: code.join("\n") });
+        code = [];
+      }
+      inCode = !inCode;
+      continue;
+    }
+    if (inCode) {
+      code.push(line);
+      continue;
+    }
+    if (!line.trim() || /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      flushParagraph();
+      continue;
+    }
+
+    const heading = line.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
+    const bullet = line.match(/^\s*([-*+])\s+(.+)$/);
+    const ordered = line.match(/^\s*(\d+)[.)]\s+(.+)$/);
+    const quote = line.match(/^\s*>\s?(.*)$/);
+    if (heading || bullet || ordered || quote) {
+      flushParagraph();
+      if (heading) blocks.push({ kind: "heading", level: heading[1]?.length ?? 2, text: heading[2] ?? "" });
+      else if (bullet) blocks.push({ kind: "list", marker: "•", text: bullet[2] ?? "" });
+      else if (ordered) blocks.push({ kind: "list", marker: `${ordered[1]}.`, text: ordered[2] ?? "" });
+      else if (quote) blocks.push({ kind: "quote", text: quote[1] ?? "" });
+      continue;
+    }
+    paragraph.push(line.trim());
+  }
+  flushParagraph();
+  if (code.length) blocks.push({ kind: "code", text: code.join("\n") });
+  return blocks;
+}
+
+function inlineMarkdown(text: string, theme: PluginTheme): ReactNode[] {
+  const segments: ReactNode[] = [];
+  const token = /(`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|\[[^\]]+\]\([^)]+\))/g;
+  let cursor = 0;
+  let index = 0;
+  for (const match of text.matchAll(token)) {
+    const value = match[0];
+    const at = match.index ?? 0;
+    if (at > cursor) segments.push(text.slice(cursor, at));
+    const body = value.startsWith("**") || value.startsWith("__") ? value.slice(2, -2)
+      : value.startsWith("`") ? value.slice(1, -1)
+      : value.match(/^\[([^\]]+)\]/)?.[1] ?? value;
+    const style = value.startsWith("**") || value.startsWith("__") ? { fontWeight: "700" as const }
+      : value.startsWith("`") ? { color: theme.colors.accent, fontFamily: "monospace" }
+      : value.startsWith("[") ? { color: theme.colors.accent, textDecorationLine: "underline" as const }
+      : undefined;
+    segments.push(style ? <Text key={`md-${index++}`} style={style}>{body}</Text> : body);
+    cursor = at + value.length;
+  }
+  if (cursor < text.length) segments.push(text.slice(cursor));
+  return segments;
+}
+
+/** A compact native Markdown treatment for assistant output, without a platform-specific renderer. */
+function AssistantText({ theme, text, roomy }: { theme: PluginTheme; text: string; roomy: boolean }) {
+  const blocks = useMemo(() => assistantBlocks(text), [text]);
+  const bodyStyle: StyleProp<TextStyle> = { color: theme.colors.foreground, fontSize: roomy ? 15 : font.base, lineHeight: roomy ? 23 : 19 };
   return (
-    <Text selectable style={style}>
-      {shown}
-    </Text>
+    <View style={{ gap: space.sm }}>
+      {blocks.map((block, index) => {
+        if (block.kind === "code") {
+          return <Text key={index} selectable style={{ color: theme.colors.foregroundMuted, backgroundColor: theme.colors.surface1,
+            borderRadius: radius.sm, padding: space.sm, fontFamily: "monospace", fontSize: roomy ? 13 : font.xs, lineHeight: roomy ? 20 : 16 }}>
+            {block.text}
+          </Text>;
+        }
+        if (block.kind === "heading") {
+          return <Text key={index} accessibilityRole="header" style={{ color: theme.colors.foreground,
+            fontSize: roomy ? block.level <= 2 ? 17 : 15 : block.level <= 2 ? 15 : 13,
+            lineHeight: roomy ? 23 : 20, fontWeight: "700", marginTop: index > 0 ? space.xs : 0 }}>
+            {inlineMarkdown(block.text, theme)}
+          </Text>;
+        }
+        if (block.kind === "list") {
+          return <View key={index} style={{ flexDirection: "row", alignItems: "flex-start", gap: space.sm, paddingLeft: space.xs }}>
+            <Text style={[bodyStyle, { color: theme.colors.foregroundMuted, minWidth: block.marker.length > 1 ? 22 : 12 }]}>{block.marker}</Text>
+            <Text selectable style={[bodyStyle, { flex: 1 }]}>{inlineMarkdown(block.text, theme)}</Text>
+          </View>;
+        }
+        if (block.kind === "quote") {
+          return <Text key={index} selectable style={[bodyStyle, { color: theme.colors.foregroundMuted, borderLeftWidth: 2,
+            borderLeftColor: theme.colors.border, paddingLeft: space.sm }]}>{inlineMarkdown(block.text, theme)}</Text>;
+        }
+        return <Text key={index} selectable style={bodyStyle}>{inlineMarkdown(block.text, theme)}</Text>;
+      })}
+    </View>
   );
 }
 
@@ -115,6 +202,7 @@ const Row = memo(function Row({
   const { colors } = theme;
   if (row.kind === "tools") {
     const latest = row.tools[row.tools.length - 1] as Extract<ChatItem, { kind: "tool" }>;
+    const summary = conciseToolSummary(latest.summary);
     const color =
       latest.status === "failed" ? colors.statusDanger : latest.status === "running" ? colors.accent : colors.foregroundMuted;
     const more = row.tools.length - 1;
@@ -130,7 +218,7 @@ const Row = memo(function Row({
           <Icon name={TOOL_ICON[latest.status] ?? "Wrench"} size={14} color={color} />
           <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, fontSize: roomy ? 13 : font.sm, color: colors.foregroundMuted }}>
             <Text style={{ color: colors.foreground, fontWeight: "500" }}>{latest.word}</Text>
-            {latest.summary ? `  ${latest.summary}` : ""}
+            {summary ? `  ${summary}` : ""}
           </Text>
           {more > 0 ? <Muted theme={theme} size={12}>+{more}</Muted> : null}
           <Icon name={expanded ? "ChevronUp" : "ChevronDown"} size={15} color={colors.foregroundMuted} />
@@ -164,7 +252,7 @@ const Row = memo(function Row({
     case "assistant":
       return (
         <View style={{ gap: space.xs }}>
-          <AssistantText theme={theme} text={clipped} streaming={streaming} roomy={roomy} />
+          <AssistantText theme={theme} text={clipped} roomy={roomy} />
           {rest}
         </View>
       );
@@ -270,8 +358,9 @@ export function AgentChat({
     anchorScroll(scroller.current, false);
   }, [agentId]);
   const jumpToLatest = () => {
-    setFollow({ ...follow.current, following: true });
-    scroller.current?.scrollToEnd({ animated: false });
+    const scroll = () => scroller.current?.scrollToEnd({ animated: true });
+    scroll();
+    requestAnimationFrame(scroll);
   };
   const onScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
@@ -341,18 +430,21 @@ export function AgentChat({
     <View style={[{ minHeight: 0 }, style]}>
       <ScrollView
         ref={scroller}
+        style={{ flex: 1, minHeight: 0 }}
         onScroll={onScroll}
         scrollEventThrottle={100}
         onContentSizeChange={onContentSizeChange}
         onLayout={onLayout}
         keyboardShouldPersistTaps="handled"
-        contentContainerStyle={{ gap: space.sm + 2, paddingVertical: space.sm }}
+        contentContainerStyle={{ gap: space.sm + 2, paddingTop: space.sm, paddingBottom: away ? space.xl * 3 : space.sm }}
         accessibilityLabel="Recent chat, read-only"
       >
         {lines}
       </ScrollView>
-      {away && rows.length > 0 ? <Button theme={theme} size={roomy ? "touch" : "sm"} variant="outline"
-        icon="ArrowDown" label="Jump to latest" onPress={jumpToLatest} /> : null}
+      {away && rows.length > 0 ? <Button theme={theme} size={roomy ? "touch" : "md"} variant="outline" hitSlop={12}
+        style={{ position: "absolute", right: 0, bottom: 0, left: 0, zIndex: 20, elevation: 20, backgroundColor: colors.surface0 }}
+        icon="ArrowDown" label="Jump to latest" accessibilityLabel="Jump to the latest message"
+        onPress={jumpToLatest} /> : null}
     </View>
   );
 }

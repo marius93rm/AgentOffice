@@ -1,6 +1,5 @@
 import { PARENT_LABEL, ROLE_LABEL } from "./model";
 import type { Bubble, Exchange } from "./exchanges";
-import type { ResultNotice } from "../shared/inbox";
 import { normalizeRole } from "./roles";
 import { isQuestion } from "./questions";
 import type { Operation, Task } from "./operations";
@@ -71,7 +70,4 @@ export function privateOperations(items: ReadonlyMap<string, Operation>): Readon
 }
 export function privateTasks(tasks: readonly Task[]): Task[] {
   return tasks.map((task) => ({ ...task, title: "Task" }));
-}
-export function privateResult(result: ResultNotice): ResultNotice {
-  return { agentId: result.agentId, key: result.key, at: result.at, text: "Result hidden", cut: false };
 }

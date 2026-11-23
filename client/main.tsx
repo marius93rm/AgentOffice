@@ -1,10 +1,19 @@
 import type { PluginSurfaceProps, PluginWorkspacePanelProps } from "@getpaseo/plugin/client";
 import { CrewView } from "./crew-view";
+import { RenderErrorBoundary } from "./render-error";
 
 export function CrewPanel(props: PluginWorkspacePanelProps) {
-  return <CrewView key={props.host.id + "/" + props.workspaceId} {...props} scope={props.workspaceId} />;
+  return (
+    <RenderErrorBoundary key={props.host.id + "/" + props.workspaceId}>
+      <CrewView {...props} scope={props.workspaceId} />
+    </RenderErrorBoundary>
+  );
 }
 
 export function CrewSurface(props: PluginSurfaceProps) {
-  return <CrewView key={props.host.id} {...props} scope={null} />;
+  return (
+    <RenderErrorBoundary key={props.host.id}>
+      <CrewView {...props} scope={null} />
+    </RenderErrorBoundary>
+  );
 }

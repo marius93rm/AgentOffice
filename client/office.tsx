@@ -143,8 +143,6 @@ interface CharacterProps {
   /** Its room is scrolled out of view: it still goes where it belongs, but its frames rest. */
   unseen: boolean;
   onPress: (agentId: string) => void;
-  onResult?: (agentId: string) => void;
-  unread: boolean;
   onStep: (agentId: string, direction: -1 | 1) => void;
   registerAgent: (agentId: string, view: View | null) => void;
   onGone: (agentId: string) => void;
@@ -183,8 +181,6 @@ const Character = memo(
     still: reduced,
     unseen,
     onPress,
-    onResult,
-    unread,
     onStep,
     registerAgent,
     onGone,
@@ -377,9 +373,7 @@ const Character = memo(
     const padTop = Math.max(0, MIN_TOUCH - height);
     const hidden = gone && walking === null;
     const speaks = presence.visible && !hidden && !leaving;
-    const emote = presence.emote === "check" && !unread ? null : presence.emote;
-    const hasResult = emote === "check" && onResult !== undefined && walking === null && !landing && !hidden && !leaving;
-    const extraTop = hasResult ? MIN_TOUCH : 0;
+    const emote = presence.emote;
     return (
       <Mover
         move={move}
@@ -387,9 +381,9 @@ const Character = memo(
         style={{
           position: "absolute",
           left: -padX,
-          top: tile - height - padTop - extraTop,
+          top: tile - height - padTop,
           width: tile + 2 * padX,
-          height: height + padTop + extraTop,
+          height: height + padTop,
           opacity: hidden ? 0 : dimmed ? DIMMED : 1,
           zIndex: row,
         }}
@@ -436,7 +430,7 @@ const Character = memo(
             pointerEvents="none"
             style={{
               position: "absolute",
-              top: height + padTop + extraTop,
+              top: height + padTop,
               alignSelf: "center",
               paddingHorizontal: 3,
               borderRadius: 3,
@@ -450,18 +444,7 @@ const Character = memo(
             </Text>
           </View>
         ) : null}
-        {hasResult ? (
-          <Pressable
-            accessibilityRole="button" accessibilityLabel={`Read result for ${characterLabel(agent, presence.state)}`}
-            onPress={() => onResult(agent.id)}
-            style={{
-              position: "absolute", left: Math.min(padX, tile + 2 * padX - MIN_TOUCH),
-              bottom: height - tile / 8, width: MIN_TOUCH, height: MIN_TOUCH, alignItems: "center", justifyContent: "flex-end",
-            }}
-          >
-            <EmoteSprite theme={theme} tile={tile} kind="check" still={reduced} paused={unseen} />
-          </Pressable>
-        ) : emote && walking === null && !landing && !hidden ? (
+        {emote && walking === null && !landing && !hidden ? (
           <View
             pointerEvents="none"
             // At the desk the emote sits to the right of the head, clear of the monitor.
@@ -491,8 +474,6 @@ const Character = memo(
     before.still === after.still &&
     before.unseen === after.unseen &&
     before.onPress === after.onPress &&
-    before.onResult === after.onResult &&
-    before.unread === after.unread &&
     before.onStep === after.onStep &&
     before.registerAgent === after.registerAgent &&
     before.presence.activity === after.presence.activity &&
@@ -903,9 +884,7 @@ export interface OfficeSceneProps {
   /** Reduced motion: no walking, no frames, no travelling markers. */
   still: boolean;
   onSelect: (agentId: string) => void;
-  onResult?: (agentId: string) => void;
   onBubble?: (bubble: Bubble) => void;
-  unreadResults?: ReadonlySet<string>;
   touch?: boolean;
   interactive?: boolean;
   scrollable?: boolean;
@@ -942,9 +921,7 @@ export const OfficeScene = memo(function OfficeScene({
   highlighted,
   still: reduced,
   onSelect,
-  onResult,
   onBubble,
-  unreadResults,
   touch = false,
   interactive = true,
   scrollable = true,
@@ -1213,8 +1190,6 @@ export const OfficeScene = memo(function OfficeScene({
                 still={reduced || offscreen}
                 unseen={seen !== null && !seen.has(member.roomId)}
                 onPress={onSelect}
-                onResult={onResult}
-                unread={unreadResults?.has(member.agentId) ?? true}
                 registerAgent={registerAgent}
                 onStep={stepAgent}
                 onGone={onGone}

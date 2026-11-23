@@ -1,6 +1,5 @@
 import { useHosts, usePaseo, useSettings, type PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { Modal, ScrollView, TextInput, useToast } from "@getpaseo/plugin/client/react-native";
-import type { ResultNotice } from "../shared/inbox";
 import { DEFAULT_PREFERENCES, DEFAULT_ROOM, lobbyPreferences, type LobbyPreferences, type RoomSetting } from "../shared/preferences";
 import type { PaseoAgent, PaseoRequest } from "./paseo-types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -13,7 +12,7 @@ import { DockHandle } from "./dock-handle";
 import { SIDE_DOCK_MIN_WIDTH, bottomDockHeight, readSize, sideDockWidth } from "./dock-model";
 import { candidatesOf } from "./feed-plan";
 import { CrewList } from "./list";
-import { InboxRoomChoice, InboxStatusLine, OfficeSettings, RequestsSheet, ResultSheet, ResultsSheet, RoomsSheet, SheetRow, TeamCard, type RoomEntry } from "./lobby-sheets";
+import { InboxRoomChoice, InboxStatusLine, OfficeSettings, RequestsSheet, RoomsSheet, SheetRow, TeamCard, type RoomEntry } from "./lobby-sheets";
 import type { Bubble } from "./exchanges";
 import {
   buildForest,
@@ -44,7 +43,7 @@ import { canNotify, scopedTasks, type Notice } from "./notifications";
 import { BoardSheet, MetricsSheet, NotificationsSheet, OperationsSheet } from "./supervision";
 import { metricsOf } from "./metrics";
 import { ReplaySheet } from "./replay";
-import { privacyFor, privateBubbles, privateExchanges, privateOperations, privateResult, privateTasks } from "./privacy";
+import { privacyFor, privateBubbles, privateExchanges, privateOperations, privateTasks } from "./privacy";
 import { isQuestion } from "./questions";
 import { officeImage } from "./screenshot";
 import {
@@ -81,11 +80,10 @@ import { canExportOffice, downloadOffice, recall, remember } from "./web";
 type Filter = CrewState | "all";
 type Mode = "office" | "list";
 type Sheet = (
-  | { kind: "agent" | "requests" | "results" | "rooms" | "settings" | "filters" | "search" | "closed" | "demo" | "art" | "tools" | "operations" | "notices" | "replay" | "metrics" | "privacy" }
+  | { kind: "agent" | "requests" | "rooms" | "settings" | "filters" | "search" | "closed" | "demo" | "art" | "tools" | "operations" | "notices" | "replay" | "metrics" | "privacy" }
   | { kind: "board"; workspaceId: string | null }
   | { kind: "avatar" | "agent-menu" | "agent-facts"; agentId: string }
   | { kind: "private-request"; agentId: string }
-  | { kind: "result"; result: ResultNotice }
   | { kind: "bubble"; bubble: Bubble }
 ) & { back?: Sheet };
 
@@ -162,7 +160,6 @@ export function CrewView({ scope: homeScope, theme, host, layout, navigation }: 
   const [sheet, setSheet] = useState<Sheet | null>(null);
   const previousRoom = useRef<string | null>(homeScope);
   const [queueAcrossRooms, setQueueAcrossRooms] = useState(false);
-  const [showSeen, setShowSeen] = useState(false);
   const [nextRequests, setNextRequests] = useState<readonly string[] | null>(null);
   const [mapFocus, setMapFocus] = useState<{ agentId: string } | null>(null);
   // The room whose closed agents are listed in the dock.
@@ -189,15 +186,8 @@ export function CrewView({ scope: homeScope, theme, host, layout, navigation }: 
     }
     return grouped;
   }, [pendingEntries]);
-  const unreadResults = useMemo(() => new Set(inbox.unread.map((result) => result.agentId)), [inbox.unread]);
   const officeRequests = useMemo(() => pendingEntries.filter(({ agent }) => inInboxRoom(agent.workspaceId, scope)), [pendingEntries, scope]);
-  const officeUnread = useMemo(() => inbox.unread.filter(({ agentId }) => inInboxRoom(sources.agents.get(agentId)?.workspaceId, scope)),
-    [inbox.unread, sources.agents, scope]);
   const queueRequests = queueAcrossRooms ? pendingEntries : officeRequests;
-  const queueUnread = queueAcrossRooms ? inbox.unread : officeUnread;
-  const queueSeen = useMemo(() => inbox.seen.filter(({ agentId }) =>
-    inInboxRoom(sources.agents.get(agentId)?.workspaceId, queueAcrossRooms ? null : scope)),
-  [inbox.seen, sources.agents, scope, queueAcrossRooms]);
   const nextRequest = useMemo(() => {
     if (!nextRequests) return undefined;
     const pending = new Map(queueRequests.map((entry) => [permissionKey(entry.agent.id, entry.request.id), entry]));
@@ -372,22 +362,12 @@ export function CrewView({ scope: homeScope, theme, host, layout, navigation }: 
     }
     setDialog({ kind: "permission", agent, requestId });
   }, [setDialog, privateMode]);
-  const showResults = () => {
-    refreshInbox();
-    setQueueAcrossRooms(false);
-    setShowSeen(false);
-    setSheet({ kind: "results" });
-  };
   const showRequests = () => {
     refreshInbox();
     setQueueAcrossRooms(false);
     setNextRequests(null);
     setSheet({ kind: "requests" });
   };
-  const showResult = useCallback((agentId: string, back?: Sheet) => {
-    const result = inbox.notices.get(agentId);
-    if (result) setSheet({ kind: "result", result, back });
-  }, [inbox.notices]);
   const showBubble = useCallback((bubble: Bubble) => {
     const agent = directory.agents.get(bubble.agentId);
     if (bubble.tone === "ask" && agent?.pendingPermissions.some((request) => request.id === bubble.key)) {
@@ -489,7 +469,6 @@ export function CrewView({ scope: homeScope, theme, host, layout, navigation }: 
         onMessage={() => setDialog({ kind: "message", agent: node.agent })}
         onReview={(requestId) => openRequest(node.agent, requestId)}
         pending={pendingByAgent.get(node.agent.id) ?? NO_REQUESTS}
-        onShowResult={unreadResults.has(node.agent.id) ? () => showResult(node.agent.id, place.sheet ? sheet ?? undefined : undefined) : undefined}
         onMore={() => setSheet({ kind: "agent-menu", agentId: node.agent.id, back: place.sheet ? sheet ?? undefined : undefined })}
         busy={busy}
         compact={!place.dock && !place.sheet}
@@ -507,7 +486,7 @@ export function CrewView({ scope: homeScope, theme, host, layout, navigation }: 
       </Detail>
     ),
     [theme, paseo, shown, reducedMotion, latest, feed.live, online, now, closedList, navigation, openAgent, setDialog,
-      openRequest, pendingByAgent, unreadResults, showResult, sheet, busy, team, focusOnMap, showAgent, privateMode],
+      openRequest, pendingByAgent, sheet, busy, team, focusOnMap, showAgent, privateMode],
   );
   const renderDetail = useCallback(
     (node: CrewNode, style: StyleProp<ViewStyle>) => detailFor(node, { dock: false, style }),
@@ -570,10 +549,7 @@ export function CrewView({ scope: homeScope, theme, host, layout, navigation }: 
   const wakeAt = useMemo(() => {
     if (!shown) return null;
     const aged = office ? (closedList?.nodes ?? []) : [...nodes.values()];
-    const panelAges = sheet?.kind === "requests" ? queueRequests.flatMap((entry) => entry.at ? [entry.at] : [])
-      : sheet?.kind === "results" ? (showSeen ? queueSeen : queueUnread).map((entry) => entry.at)
-      : sheet?.kind === "result" ? [sheet.result.at]
-      : [];
+    const panelAges = sheet?.kind === "requests" ? queueRequests.flatMap((entry) => entry.at ? [entry.at] : []) : [];
     const presenceAt = office && preferences.ambient ? nextPresenceChange(plan, directory.agents, crewState, now) : null;
     const visualAt = Math.min(presenceAt ?? Infinity, office ? lighting.next ?? Infinity : Infinity);
     const observationAges = [...(office ? (selected ? [selected] : []) : listVisible)].flatMap((id) => {
@@ -583,8 +559,8 @@ export function CrewView({ scope: homeScope, theme, host, layout, navigation }: 
     });
     const ages = [...aged.map((node) => activityAt(node.agent)), ...panelAges, ...observationAges].map((at) => nextAgeChange(at, now));
     return nextWake(Number.isFinite(visualAt) ? visualAt : null, ages, now);
-  }, [shown, office, closedList, nodes, plan, directory.agents, now, sheet, queueRequests, queueUnread, queueSeen,
-    showSeen, selected, listVisible, latest, preferences.ambient, lighting.next]);
+  }, [shown, office, closedList, nodes, plan, directory.agents, now, sheet, queueRequests,
+    selected, listVisible, latest, preferences.ambient, lighting.next]);
   useWake(wakeAt, turn, () => setTurn((count) => count + 1));
   const onSceneLayout = (event: LayoutChangeEvent) => {
     const width = Math.round(event.nativeEvent.layout.width);
@@ -597,7 +573,6 @@ export function CrewView({ scope: homeScope, theme, host, layout, navigation }: 
 
   const room = roomEntries.find((entry) => entry.id === scope) ?? null;
   const currentRoomName = scope === null ? null : directory.workspaces.get(scope)?.name ?? room?.name ?? "This room";
-  const queueScopeName = queueAcrossRooms ? "All rooms" : currentRoomName ?? "All rooms";
   const changeQueueScope = (allRooms: boolean) => {
     setQueueAcrossRooms(allRooms);
     setNextRequests(null);
@@ -674,10 +649,6 @@ export function CrewView({ scope: homeScope, theme, host, layout, navigation }: 
           label={counter("Inbox", officeRequests.length)} icon={touch ? undefined : "Inbox"} numberOfLines={1}
           accessibilityLabel={`Inbox, ${officeRequests.length} pending in ${currentRoomName ?? "all rooms"}`}
           style={touch ? { flex: 1, minWidth: 44, paddingHorizontal: space.xs } : undefined} onPress={showRequests} />
-        <Button theme={theme} size={touch ? "touch" : "sm"} variant="outline"
-          label={counter("Results", officeUnread.length)} icon={touch ? undefined : "CircleCheck"} numberOfLines={1}
-          accessibilityLabel={`Results, ${officeUnread.length} to see in ${currentRoomName ?? "all rooms"}`}
-          style={touch ? { flex: 1, minWidth: 44, paddingHorizontal: space.xs } : undefined} onPress={showResults} />
         <Button theme={theme} size={touch ? "touch" : "sm"} variant="outline" label="Activity"
           icon={touch ? undefined : "Activity"} numberOfLines={1}
           style={touch ? { flex: 1, minWidth: 44, paddingHorizontal: space.xs } : undefined} onPress={() => setSheet({ kind: "tools" })} />
@@ -716,7 +687,6 @@ export function CrewView({ scope: homeScope, theme, host, layout, navigation }: 
       </Muted>
     </Pressable>
   )) : null;
-  const resultAgent = sheet?.kind === "result" ? directory.agents.get(sheet.result.agentId) : undefined;
   const bubbleAgent = sheet?.kind === "bubble" ? directory.agents.get(sheet.bubble.agentId) : undefined;
   const actionAgent = sheet?.kind === "avatar" || sheet?.kind === "agent-menu" || sheet?.kind === "agent-facts"
     ? directory.agents.get(sheet.agentId) : undefined;
@@ -726,8 +696,6 @@ export function CrewView({ scope: homeScope, theme, host, layout, navigation }: 
   const title = actions.dialog ? agentDialogTitle(actions.dialog, directory.agents)
     : sheet?.kind === "agent" ? selectedNode ? displayTitle(selectedNode.agent) : "Agent"
     : sheet?.kind === "requests" ? "Inbox"
-    : sheet?.kind === "results" ? "Results"
-    : sheet?.kind === "result" ? "Result"
     : sheet?.kind === "rooms" ? "Rooms"
     : sheet?.kind === "settings" ? "Office settings"
     : sheet?.kind === "filters" ? "Filters and zoom"
@@ -788,8 +756,6 @@ export function CrewView({ scope: homeScope, theme, host, layout, navigation }: 
                 highlighted={litTeam}
                 still={officeStill || !shown}
                 onSelect={toggle}
-                onResult={showResult}
-                unreadResults={unreadResults}
                 onBubble={showBubble}
                 touch={touch}
                 roomScope={scope}
@@ -884,37 +850,6 @@ export function CrewView({ scope: homeScope, theme, host, layout, navigation }: 
                 complete={inbox.status.phase === "ready" && !directory.truncated} next={nextRequest}
                 onPick={({ agent, request }) => openRequest(agent, request.id)} onLocate={focusOnMap} />
             </>
-          ) : sheet?.kind === "results" ? (
-            <>
-              <InboxRoomChoice theme={theme} roomName={currentRoomName} allRooms={queueAcrossRooms} onChange={changeQueueScope} />
-              <InboxStatusLine theme={theme} status={inbox.resultsStatus} onRetry={refreshInbox} partial={directory.truncated} />
-              <ResultsSheet theme={theme} unread={privateMode ? queueUnread.map(privateResult) : queueUnread}
-                seen={privateMode ? queueSeen.map(privateResult) : queueSeen} showSeen={showSeen} onViewChange={setShowSeen}
-                agents={directory.agents} workspaceName={workspaceName} now={now} scopeName={queueScopeName}
-                complete={inbox.resultsStatus.phase === "ready" && !directory.truncated}
-                writable={inbox.canSave && !inbox.saving && online !== false}
-                onReadAll={() => void inbox.markAllRead(queueUnread).then((saved) => {
-                  if (saved) toast.show(`${queueUnread.length} marked as seen`, { variant: "success" });
-                  else toast.error("Could not mark the results as seen. Try again.");
-                })}
-                onPick={(result) => {
-                  const original = inbox.notices.get(result.agentId);
-                  if (original?.key === result.key) setSheet({ kind: "result", result: original, back: sheet });
-                }} />
-            </>
-          ) : sheet?.kind === "result" ? (
-            resultAgent ? <ResultSheet key={JSON.stringify([resultAgent.id, sheet.result.key, privateMode])} theme={theme} paseo={paseo} result={privateMode ? privateResult(sheet.result) : sheet.result}
-              agent={resultAgent} shown={shown} now={now} saving={inbox.saving} error={privateMode ? null : inbox.error}
-              onOpen={navigation ? () => openAgent(resultAgent) : null}
-              onMessage={privateMode ? null : () => setDialog({ kind: "message", agent: resultAgent })}
-              onLocate={() => focusOnMap(resultAgent)}
-              onRead={inbox.canSave && online !== false && inbox.unread.some((result) => result.agentId === resultAgent.id && result.key === sheet.result.key)
-                ? (body) => {
-                void inbox.markRead(sheet.result, privateMode ? "" : body).then((saved) => {
-                  if (saved) setSheet((current) => current === sheet ? sheet.back ?? null : current);
-                  else toast.error("Could not mark the result as seen. Try again.");
-                });
-              } : null} /> : <Muted theme={theme}>This agent is no longer available.</Muted>
           ) : sheet?.kind === "rooms" ? (
             <RoomsSheet theme={theme} rooms={roomEntries} scope={scope} favorites={preferences.favorites}
               saving={settings.status !== "ready" || settings.saving} onPick={chooseRoom}

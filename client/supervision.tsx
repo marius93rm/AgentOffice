@@ -48,7 +48,7 @@ export function OperationsSheet({ theme, agents, latest, live, connection, works
             </View>
             <View style={{ paddingHorizontal: space.sm, paddingBottom: space.xs, gap: 2 }}>
               {op ? <Text style={{ color: theme.colors.foreground, fontSize: 14 }}>{operationTitle(op)} · {OPERATION_PHASE[op.phase]}</Text>
-                : <Muted theme={theme} size={13}>Activity details unavailable</Muted>}
+              : <Muted theme={theme} size={13}>No recent activity</Muted>}
               {!privateMode && op && (op.tool || op.resource) ? <Muted theme={theme} size={13} numberOfLines={2}>{[op.tool, op.resource].filter(Boolean).join(" · ")}</Muted> : null}
               {crewState(agent) === "failed" ? <Text numberOfLines={3} style={{ color: theme.colors.statusDanger, fontSize: 13 }}>
                 {privateMode ? "Agent reported an error" : agent.lastError ?? "Agent reported an error"}
