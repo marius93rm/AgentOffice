@@ -144,7 +144,7 @@ export function buildForest(agents: Iterable<PaseoAgent>, workspaceId: string | 
   }
   const members = new Set<string>();
   const seed = [...live.values()].filter(
-    (agent) => workspaceId === null || agent.workspaceId === workspaceId,
+    (agent) => workspaceId === null || (agent.workspaceId ?? "") === workspaceId,
   );
   const queue = [...seed];
   while (queue.length > 0) {
@@ -248,7 +248,7 @@ export function groupByWorkspace(
     groups.push({
       workspaceId,
       name: workspace
-        ? `${workspace.projectDisplayName} · ${workspace.name}`
+        ? [workspace.projectDisplayName, workspace.name].filter(Boolean).join(" · ")
         : workspaceId
           ? workspaceId.slice(0, 8)
           : "No workspace",

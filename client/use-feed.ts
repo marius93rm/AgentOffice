@@ -1,9 +1,12 @@
 import type { PaseoAgentTimelineEvent, PaseoApi } from "./paseo-types";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   EMPTY_FEED,
   eventsFromHistory,
   eventsFromStream,
+  mergeTaskSnapshot,
+  operationOfEvent,
+  operationExpiry,
   reduceFeed,
   retainAgents,
   visibleFeed,
@@ -12,6 +15,7 @@ import {
   type FeedEvent,
   type FeedState,
 } from "./exchanges";
+import type { Operation, TaskSnapshot } from "./operations";
 import { hubFor, type FeedHub } from "./feed-hub";
 import { FEED_CAP, FEED_RETRY_MS, isWanted, planFeed, type FeedCandidate } from "./feed-plan";
 
@@ -22,6 +26,7 @@ const FLUSH_MS = 150;
  * inside the lifetime of a bubble or a message, and a room scrolled into view has to show them.
  */
 const BACKFILL_LIMIT = 20;
+interface Subscription { since: number; stop: () => void; ready: boolean; page: number }
 
 export interface Feed {
   /** agentId → the bubble over its head right now. */
@@ -30,12 +35,20 @@ export interface Feed {
   exchanges: readonly Exchange[];
   /** The agents this view has a live timeline for; everyone else is state only. */
   live: ReadonlySet<string>;
+  latest: ReadonlyMap<string, Operation>;
+  running: ReadonlyMap<string, readonly Operation[]>;
+  tasks: ReadonlyMap<string, TaskSnapshot>;
+  now: number;
+  readTasks: (agentId: string) => Promise<"found" | "empty" | "error">;
 }
 
 export interface FeedOptions {
   /** False releases every subscription, e.g. while the list view is showing. Defaults to true. */
   enabled?: boolean;
   cap?: number;
+  known?: ReadonlySet<string>;
+  connected?: boolean;
+  onEvents?: (operations: readonly Operation[], live: boolean) => void;
 }
 
 /** Every mounted Lobby view on this connection, bubbles and chat alike, draws on the same budget. */
@@ -55,6 +68,7 @@ export function timelineHub(paseo: PaseoApi): FeedHub<PaseoAgentTimelineEvent> {
  */
 export function useFeed(paseo: PaseoApi, candidates: readonly FeedCandidate[], options?: FeedOptions): Feed {
   const enabled = options?.enabled ?? true;
+  const connected = options?.connected ?? true;
   const cap = options?.cap ?? FEED_CAP;
   const [feed, setFeed] = useState<FeedState>(EMPTY_FEED);
   const [now, setNow] = useState(() => Date.now());
@@ -62,18 +76,40 @@ export function useFeed(paseo: PaseoApi, candidates: readonly FeedCandidate[], o
 
   const candidatesRef = useRef(candidates);
   candidatesRef.current = candidates;
-  const settings = useRef({ enabled, cap });
-  settings.current = { enabled, cap };
+  const settings = useRef({ enabled, cap, connected, known: options?.known, onEvents: options?.onEvents });
+  settings.current = { enabled, cap, connected, known: options?.known, onEvents: options?.onEvents };
   const sync = useRef<() => void>(() => {});
+  const feedLife = useRef<number | null>(null);
+  const lifeCount = useRef(0);
+  const readTasks = useCallback(async (agentId: string) => {
+    const life = feedLife.current;
+    if (life === null || !settings.current.connected) return "error";
+    try {
+      const page = await paseo.agents.ref(agentId).timeline.refetch({ direction: "tail", limit: 80, projection: "projected" });
+      if (feedLife.current !== life) return "error";
+      if (settings.current.known && !settings.current.known.has(agentId)) return "error";
+      const at = Date.now();
+      const latest = eventsFromHistory(agentId, page.entries, at).findLast((event) => event.kind === "tasks");
+      if (!latest) return "empty";
+      setFeed((previous) => mergeTaskSnapshot(previous, agentId, latest.snapshot));
+      setNow(at);
+      return "found";
+    } catch {
+      return "error";
+    }
+  }, [paseo]);
 
   useEffect(() => {
+    feedLife.current = ++lifeCount.current;
     let alive = true;
     const hub = timelineHub(paseo);
     const view = {};
-    const subscriptions = new Map<string, { since: number; stop: () => void }>();
+    const subscriptions = new Map<string, Subscription>();
     const lastWanted = new Map<string, number>();
     const failed = new Map<string, number>();
     let pending: FeedEvent[] = [];
+    let observed: Operation[] = [];
+    let history: Operation[] = [];
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
     let recheckTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -82,27 +118,43 @@ export function useFeed(paseo: PaseoApi, candidates: readonly FeedCandidate[], o
       const events = pending;
       pending = [];
       const at = Date.now();
+      if (history.length) settings.current.onEvents?.(history, false);
+      if (observed.length) settings.current.onEvents?.(observed, true);
+      observed = [];
+      history = [];
       setNow(at);
       setFeed((current) => reduceFeed(current, events, at));
     };
-    const enqueue = (events: FeedEvent[]) => {
-      if (!alive || events.length === 0) return;
+    const enqueue = (events: FeedEvent[], live = true, recordedAt?: number, humanMessage?: Operation) => {
+      if (!alive || (events.length === 0 && !humanMessage)) return;
       pending.push(...events);
+      const log = live ? observed : history;
+      if (humanMessage) log.push(humanMessage);
+      for (const event of events) {
+        const operation = operationOfEvent(event);
+        if (operation && operation.at) log.push(recordedAt ? { ...operation, at: recordedAt } : operation);
+      }
       flushTimer ??= setTimeout(flush, FLUSH_MS);
     };
 
-    const backfill = (agentId: string) => {
+    const reportLive = () => {
+      const ids = new Set([...subscriptions].filter(([, entry]) => entry.ready).map(([id]) => id));
+      setLive((previous) => previous.size === ids.size && [...ids].every((id) => previous.has(id)) ? previous : ids);
+    };
+
+    const backfill = (agentId: string, entry: Subscription) => {
+      const request = ++entry.page;
       void paseo.agents
         .ref(agentId)
         .timeline.refetch({ direction: "tail", limit: BACKFILL_LIMIT, projection: "projected" })
         .then((page) => {
-          if (subscriptions.has(agentId)) enqueue(eventsFromHistory(agentId, page.entries, Date.now()));
+          if (subscriptions.get(agentId) === entry && request === entry.page) enqueue(eventsFromHistory(agentId, page.entries, Date.now()), false);
         })
         .catch(() => {});
     };
 
     const open = (agentId: string, rank: number) => {
-      const entry = { since: Date.now(), stop: () => {} };
+      const entry: Subscription = { since: Date.now(), stop: () => {}, ready: false, page: 0 };
       const claim = {
         view,
         rank,
@@ -124,14 +176,26 @@ export function useFeed(paseo: PaseoApi, candidates: readonly FeedCandidate[], o
             sync.current();
             return;
           case "subscription_restored":
-            backfill(agentId);
+            entry.ready = true;
+            reportLive();
+            backfill(agentId, entry);
             return;
           case "replacement":
             enqueue(eventsFromStream(update, Date.now()));
-            backfill(agentId);
+            backfill(agentId, entry);
             return;
           default:
-            enqueue(eventsFromStream(update, Date.now()));
+            {
+              const receivedAt = Date.now();
+              const stamped = "timestamp" in update && typeof update.timestamp === "string" ? Date.parse(update.timestamp) : NaN;
+              const at = Number.isFinite(stamped) ? Math.min(stamped, receivedAt) : receivedAt;
+              const item = update.event.type === "timeline" ? update.event.item : undefined;
+              const id = item?.type === "user_message" ? item.messageId ?? item.clientMessageId : undefined;
+              const humanMessage: Operation | undefined = id
+                ? { id, agentId, kind: "messaging", phase: "completed", source: "message", at }
+                : undefined;
+              enqueue(eventsFromStream(update, receivedAt), true, at, humanMessage);
+            }
         }
       }, claim);
       if (!lease) {
@@ -142,7 +206,18 @@ export function useFeed(paseo: PaseoApi, candidates: readonly FeedCandidate[], o
       entry.stop = lease.release;
       subscriptions.set(agentId, entry);
       // Live delivery only starts once the daemon confirms; what came before is history.
-      lease.ready.then(() => backfill(agentId)).catch(() => {});
+      void lease.ready.then(() => {
+        if (subscriptions.get(agentId) !== entry) return;
+        entry.ready = true;
+        reportLive();
+        backfill(agentId, entry);
+      }).catch(() => {
+        if (subscriptions.get(agentId) !== entry) return;
+        subscriptions.delete(agentId);
+        entry.stop();
+        failed.set(agentId, Date.now());
+        sync.current();
+      });
     };
 
     sync.current = () => {
@@ -150,7 +225,8 @@ export function useFeed(paseo: PaseoApi, candidates: readonly FeedCandidate[], o
       if (recheckTimer) clearTimeout(recheckTimer);
       recheckTimer = null;
       const at = Date.now();
-      const visible = settings.current.enabled ? candidatesRef.current : [];
+      const online = settings.current.enabled && settings.current.connected;
+      const visible = online ? candidatesRef.current : [];
       for (const candidate of visible) {
         if (subscriptions.has(candidate.id) && isWanted(candidate.state)) lastWanted.set(candidate.id, at);
       }
@@ -161,7 +237,7 @@ export function useFeed(paseo: PaseoApi, candidates: readonly FeedCandidate[], o
         failed,
         now: at,
         // Disabled means released now, not after the linger.
-        cap: settings.current.enabled ? settings.current.cap : 0,
+        cap: online ? settings.current.cap : 0,
       });
       for (const id of plan.unsubscribe) {
         subscriptions.get(id)?.stop();
@@ -176,17 +252,14 @@ export function useFeed(paseo: PaseoApi, candidates: readonly FeedCandidate[], o
         recheckTimer = setTimeout(() => sync.current(), Math.max(50, recheckAt - at));
       }
       const keep = new Set([...visible.map((candidate) => candidate.id), ...subscriptions.keys()]);
-      setFeed((current) => retainAgents(current, keep));
-      setLive((current) =>
-        current.size === subscriptions.size && [...subscriptions.keys()].every((id) => current.has(id))
-          ? current
-          : new Set(subscriptions.keys()),
-      );
+      setFeed((current) => retainAgents(current, keep, settings.current.known));
+      reportLive();
     };
     sync.current();
 
     return () => {
       alive = false;
+      feedLife.current = null;
       sync.current = () => {};
       if (flushTimer) clearTimeout(flushTimer);
       if (recheckTimer) clearTimeout(recheckTimer);
@@ -199,22 +272,23 @@ export function useFeed(paseo: PaseoApi, candidates: readonly FeedCandidate[], o
   const signature = candidates.map((candidate) => `${candidate.id}:${candidate.state}`).join("|");
   useEffect(() => {
     sync.current();
-  }, [signature, enabled, cap]);
+  }, [signature, enabled, cap, connected, options?.known]);
 
   const visible = useMemo(() => visibleFeed(feed, now), [feed, now]);
-  const { nextExpiry } = visible;
+  const nextExpiry = Math.min(visible.nextExpiry ?? Infinity, operationExpiry(feed, now) ?? Infinity);
   useEffect(() => {
-    if (nextExpiry === null) return;
+    if (!enabled || !Number.isFinite(nextExpiry)) return;
     const timer = setTimeout(() => {
       const at = Date.now();
       setNow(at);
       setFeed((current) => reduceFeed(current, [], at));
     }, Math.max(50, nextExpiry - Date.now()));
     return () => clearTimeout(timer);
-  }, [nextExpiry]);
+  }, [nextExpiry, enabled]);
 
   return useMemo(
-    () => ({ bubbles: visible.bubbles, exchanges: visible.exchanges, live }),
-    [visible, live],
+    () => ({ bubbles: visible.bubbles, exchanges: visible.exchanges, live, latest: feed.latest,
+      running: feed.running, tasks: feed.tasks, now, readTasks }),
+    [visible, live, feed.latest, feed.running, feed.tasks, now, readTasks],
   );
 }

@@ -368,7 +368,7 @@ export function Strip({
   children: ReactNode;
 }) {
   const held = useContext(MotionPaused) || paused;
-  const key = `${cycle.beatMs}:${cycle.frames.join(",")}`;
+  const key = `${cycle.startAt ?? ""}:${cycle.beatMs}:${cycle.frames.join(",")}`;
   const strip = useRef<View>(null);
   const [frame, setFrame] = useState(0);
   useEffect(() => {

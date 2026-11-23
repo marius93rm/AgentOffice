@@ -1,15 +1,14 @@
-# Agent Lobby
+# Agent Lobby 2.0
 
 A plugin that shows your agents as a small pixel-art office. Each workspace is a room, each
 agent has a desk, and a character's pose tells you what its agent is doing: typing, waiting for
 you, finished, resting, or gone home. It lives in a side pane and is meant to be glanced at.
 
 <p>
-  <img src="docs/lobby-surface-light.png" width="582" alt="The Lobby surface in a light theme: four rooms named for invented workspaces share walls in one floor plan. Characters sit typing at desks under small tool bubbles, two finished ones stand at a pantry table with a check over their heads, one sleeps at its desk, and filing cabinets carry the counts of closed agents.">
+  <img src="docs/lobby-v2-day.png" width="582" alt="The Demo Mode studio in daylight, with six pixel characters, a pantry, a bookcase and framed art.">
 </p>
 
-Every picture here is drawn from an invented fleet: the workspaces, agents and messages in them do
-not exist.
+The previews use Demo Mode fixtures. [Daylight](docs/lobby-v2-day.png) · [Night](docs/lobby-v2-night.png) · [Chat at phone width](docs/lobby-v2-phone.png).
 
 It adds two things to Paseo:
 
@@ -53,6 +52,9 @@ Dark versions: [surface](docs/lobby-surface-dark.png), [list](docs/lobby-list-da
   short lines. A screen reader gets the full line.
 - **Walking.** When an agent starts work, finishes, takes a break or closes, its character walks
   there along the aisle and the room's corridor. A new agent walks in from the door.
+- **Room character.** Each workspace gets a stable, seeded interior look: its own muted color tint,
+  floor pattern, furniture arrangement and small wall pieces. The room keeps its look as agents
+  start, finish or move between states.
 - **Seats.** A seat comes from who started an agent and when, never from what it is doing, so
   nobody moves when somebody else starts or finishes. Closing is the one thing that frees a desk:
   the agent walks out, then the teammates seated after it walk one desk up.
@@ -61,20 +63,75 @@ Dark versions: [surface](docs/lobby-surface-dark.png), [list](docs/lobby-list-da
 - **Closed agents.** Pressing a room's filing cabinet lists them, each with what can still be done.
 - **Search and filters.** They dim everyone who does not match, in place, and mark the cabinet of a
   room with a closed agent that matches.
-- **Detail.** Selecting a character shows its recent chat, read-only: up to its last 24 lines, with
-  what you typed, what it wrote (appearing as it streams), one line for a run of tool calls, and a
-  line pointing to the full chat for anything this view does not draw. Above it are pending
-  permissions with Allow, Deny and Review, and icons for details (workspace, directory, labels,
-  last error), Open, Message and Archive. Archive confirms first. The chat follows what is written
-  next while you are at its end, and stays where you scrolled to otherwise. Drag the dock's edge to
-  make it wider beside the office or taller under it; the size is kept on the device like the zoom.
-- **List.** The toggle beside Office shows the same agents as rows ordered by state then age, each
-  with a small animated state icon and the same detail underneath.
-- **Roles.** An optional `ghostline/role` label on an agent changes its character's outline:
-  `overseer` wears a hat and cape, `nexus` a headset, `meow` cat ears and a tail. Without the
-  label an agent is a plain character. Labels only change the drawing; the plugin grants nothing.
-- **Reduced motion.** Nothing walks, travels or loops: characters stand where they belong, a line
-  joins sender and recipient, and every animation shows its first frame.
+- **Detail.** On a phone, tapping a character opens a bottom sheet with larger controls for
+  Message, Open chat, avatar and agent information. The recent transcript uses the host UI font
+  and groups tool calls in expandable rows. Questions retain their choices and free-text fields.
+  Tool permissions open a review with explicit actions. On desktop, the draggable dock keeps the
+  chat next to the map and follows the latest message while you are at the end.
+- **Agent list.** The toggle beside Office opens the same agents in a list with their written
+  status and recent chat.
+- **Roles.** The optional `ghostline/role` label supports Planner, Developer, Reviewer, Security,
+  Tester, Researcher, Overseer, Nexus and Meow. A generic avatar is available for other labels.
+- **Motion.** Office settings offer System, On and Off. System follows the device’s Reduced Motion
+  preference. Off keeps the relevant pose while stopping walks and animation loops.
+
+## Supervision
+
+Open **Supervision tools** in the Lobby toolbar. Availability follows the selected room or All rooms.
+
+On phones, **Find an agent** can search the current room or all rooms; choosing a match centers the
+map and opens that agent. Inbox and Results start with the selected room, with an explicit All rooms
+option. Results are split into **To see** and **Seen**; the bulk action marks only the results in
+the current list. The sheets show refresh state and last update, and warn when Paseo's directory
+has reached its 2,000-agent loading limit. Agent details put the next useful action first, keep
+message drafts per agent, and label activity timestamps as live, observed, or simply an agent update
+when detailed timeline data is unavailable. In chat, **Jump to latest** returns to the newest reply.
+
+- **Agent activity** shows observed tool activity, timestamps and available resources. Rows identify
+  an acknowledged live timeline or a saved snapshot. Click the agent to open the full conversation.
+- **Task board** is also available by tapping a room nameplate. It uses structured Paseo `todo`
+  snapshots with agent and workspace attribution. Use **Load recent tasks from an agent** to read
+  that agent’s recent history. Completion counts cover the latest available boards.
+- **Notifications** list pending response requests, observed errors and completions, and explicit
+  connection loss and recovery. Choose All, Action needed or Off. Inbox remains available in each mode.
+- **Session replay** uses a bounded in-memory journal of 1,200 observations per connection. Play,
+  pause, seek by seconds or event, and select 1×, 2× or 4×. An on-demand read can add up to 120 recent
+  projected timeline entries for one agent. Replay operates on the local scene and is read-only.
+- **Office metrics** show directory counts, pending responses, observed completed tasks and timing
+  where the required timestamps are present. Mean observed session span measures from creation to an
+  observed state change to Closed. A missing observation is displayed as Unavailable.
+
+Roles and animations use structured reading, editing, search, shell, test and planning events.
+A successful test effect requires an explicit successful tool outcome with exit code zero.
+At most two effects appear at a time. Conversation in the lounge is ambient, with no messages
+sent to agents. The live inbox and speech bubbles show actual communications.
+
+## Personalize
+
+- In an agent’s detail sheet, tap the palette icon to customize hair, skin tone, clothing,
+  accessories and headgear. Changes save for that agent on the host. Randomize picks an
+  appearance, and Reset returns to the deterministic look from its ID.
+- Open **Office settings** to adjust a room’s floor, walls, palette, decor, furniture and break
+  frequency. Settings include a preview, Regenerate, Reset, and JSON preset import/export.
+  Furnishings appear in the space available at the current width. The office places desks and
+  keeps the door and corridors clear. Existing presets gain defaults for new fields.
+- Day, Night and Auto change the office lighting. Auto uses local time with daylight from
+  07:00 to 19:00. Office settings also control simulated breaks, result effects and the optional cat.
+  The cat uses local paths and poses and stays asleep with Reduced Motion enabled.
+
+## Demo and privacy
+
+Use **Open Lobby demo** in Command Center or **Play demo** in Office settings. Two reproducible
+scenarios show six roles, a subagent, parallel work, messages, questions, recovery and closure.
+Playback, restart and answers are local to the demo. The demo continues to run after disconnecting
+once the app has loaded the plugin bundle.
+
+In **Privacy and export**, enable Privacy Mode before sharing. It gives agents and rooms stable
+aliases for the view session, hides chat and resource details in Lobby, and routes access to the
+full conversation and permission review through an explicit **Open in Paseo** action. On Web,
+**Export office PNG** renders the current scene with the selected privacy setting. It includes
+rooms, avatars and state icons. On iOS and Android, open the office with Privacy Mode enabled and
+use the device’s screenshot controls to capture the scene.
 
 ## Size
 
@@ -94,23 +151,14 @@ pixel at a time, up to 3 and no larger than a room still fits across; Auto goes 
 above. The size picked is kept on the device, one for the Explorer tab and one for the surface:
 across visits on the web, until the app closes on a phone.
 
-## What it costs
+## Performance
 
-Measured in the Paseo desktop app on an Apple M4 (10 cores, 120 Hz display, 1.67x), against the
-same view with its animations stopped. CPU is a share of one core; the measurements are noisy, so
-read them as ranges.
+Lobby recalculates room geometry when seats, rooms or furnishings change. The scene draws
+agents and furniture within the vertical viewport and keeps a small margin around it. Live details
+still share the same cap of eight timeline subscriptions per connection.
 
-| Situation | Cost |
-| --- | --- |
-| Pane hidden behind another tab, or app in the background | no timers, subscriptions or requests |
-| List, 28 animated icons | not distinguishable from no animation (2 pairs) |
-| Office, about 30 looping animations on screen | about 1 to 4 points of one core (5 pairs) |
-| Daemon | no measurable difference with the plugin open or closed |
-
-Frame animations are driven by one shared timer that wakes only when a visible frame is due and
-does not run when nothing loops; walks, fades and envelopes are CSS transitions that end. A
-running CSS animation was measured at 5 to 6 points of a core however few loops it drove, which is
-why loops do not use one. Rooms scrolled out of view rest their animations.
+The 10-, 30- and 100-agent model benchmark and its comparison with the original release are
+recorded in the [implementation plan](IMPLEMENTATION_PLAN.md).
 
 ## Data
 
@@ -144,15 +192,14 @@ bundled.
 
 ## Install
 
+Run this from the Agent Lobby 2.0 checkout.
+
 ```bash
-git clone https://github.com/linhmh8/agent-lobby
-cd agent-lobby
 paseo plugin install "$PWD"
 ```
 
-Requires Paseo 0.11.2 or newer: that is the first release whose daemon hands clients a message
-between agents with its verified sender. There is no build step and nothing to configure.
-Paseo supplies the runtime modules; npm dependencies are only needed for development.
+Requires Paseo 0.16.1 or newer. Enable plugins on the daemon before installing. Paseo compiles
+the client and server contributions on install and reload. Node 24 is required for local development.
 
 ## Develop
 
@@ -179,12 +226,21 @@ paseo plugin reload lobby    # recompile and reload in the running app
 
 ## Known limits
 
-- Verified in the Paseo desktop app (web renderer) only. The iOS and Android code paths are
-  written and typechecked but have not been run on a device.
-- At most four characters walk out at once: when more close together, as when a whole team is
-  archived, the rest simply go.
-- Bubbles drop Vietnamese tone marks and other accents (`Lỗi` reads `Loi`), and at this size their
-  text is something to lean in for, not to read across the room.
+- Paseo’s documented task updates provide pending, in-progress and completed states.
+  Lobby can display an explicitly structured blocked state if a provider supplies it.
+  Free-form text is shown as conversation.
+- The timeline can omit older turns, creation details and historical state changes. Replay displays
+  the observations it has. The current journal is kept in memory for the connection.
+- Test results need a recognized test command and an explicit exit code. The SDK has no shared
+  marker for a finished report. Metrics omit cost, token and context totals.
+- On-device iOS and Android validation requires a physical device or simulator. The implementation
+  plan records the exact visual and performance checks performed.
+- At most four characters walk out at once. At larger simultaneous departures the scene updates
+  the remaining characters together.
+- The pixel font supports Italian, Romanian and common Latin accents. Longer text is readable in
+  a standard UI font in the details panel.
+
+See [implementation and benchmark results](IMPLEMENTATION_PLAN.md).
 
 ## Acknowledgements
 

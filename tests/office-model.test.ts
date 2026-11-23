@@ -562,7 +562,8 @@ describe("zones", () => {
       expect(spots.some((spot) => spot.pose === "sit")).toBe(true);
       // Whole tiles only: nobody is put lying across a sofa that seats two.
       expect(spots.every((spot) => Number.isInteger(spot.x))).toBe(true);
-      expect(room.zones.flatMap((zone) => zone.props).some((item) => item.id === "rug")).toBe(true);
+      const props = room.zones.flatMap((zone) => zone.props);
+      expect(props.some((item) => item.id === "rug")).toBe(props.some((item) => item.id === "sofa"));
     }
   });
 
@@ -606,16 +607,16 @@ describe("assignBreaks", () => {
     const places = (at: number) => assignBreaks(room, people, [], at);
     const moves = new Map<string, number[]>();
     let previous = places(now);
-    for (let minute = 1; minute <= 30; minute += 1) {
-      const current = places(now + minute * 60_000);
+    for (let step = 1; step <= 30 * 12; step += 1) {
+      const current = places(now + step * 5_000);
       for (const { agentId } of people) {
         const a = previous.get(agentId);
         const b = current.get(agentId);
-        if (a && b && (a.x !== b.x || a.y !== b.y)) moves.set(agentId, [...(moves.get(agentId) ?? []), minute]);
+        if (a && b && (a.x !== b.x || a.y !== b.y)) moves.set(agentId, [...(moves.get(agentId) ?? []), step]);
       }
       previous = current;
     }
-    // Everybody moved at least once in half an hour, and nobody every minute.
+    // Everybody moved within half an hour, at their own pace.
     for (const { agentId } of people) {
       expect((moves.get(agentId) ?? []).length).toBeGreaterThan(0);
       expect((moves.get(agentId) ?? []).length).toBeLessThanOrEqual(30 / (BREAK_DWELL_MIN_MS / 60_000) + 1);

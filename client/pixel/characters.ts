@@ -2,6 +2,7 @@ import { blit, canvas, mirror, paint, type Bitmap, type Canvas, type Legend } fr
 import { Lru } from "./lru";
 import type { CharacterLook, Slot } from "./palette";
 import { CHAIR_ROWS, PROP_LEGEND } from "./props";
+import { ROLES, type LobbyRole } from "../roles";
 
 /**
  * People, 16 x 24, feet on the bottom row (lying down, 24 x 16). A character is composed from layers (cape or tail,
@@ -11,12 +12,15 @@ import { CHAIR_ROWS, PROP_LEGEND } from "./props";
  * a/A the role's gear colours, c/C cape.
  */
 
-export type CharacterRole = "overseer" | "nexus" | "meow" | "agent";
+export type CharacterRole = LobbyRole;
 /** `sit` facing up is the back view at a desk, and its two frames are typing. */
 export type CharacterPose =
   | "idle"
   | "walk"
+  /** Halfway between standing at the chair and the typing pose. */
+  | "settle"
   | "sit"
+  | "read" | "board" | "plan" | "terminal" | "watch" | "frustrated" | "celebrate"
   | "sleep"
   /** Standing with a cup; frame 1 lifts it to the mouth. */
   | "drink"
@@ -34,8 +38,16 @@ export const CHARACTER_WIDTH = 16;
 export const CHARACTER_HEIGHT = 24;
 export const CHARACTER_FRAMES: Readonly<Record<CharacterPose, number>> = {
   idle: 2,
-  walk: 4,
+  walk: 8,
+  settle: 1,
   sit: 2,
+  read: 2,
+  board: 2,
+  plan: 2,
+  terminal: 2,
+  watch: 2,
+  frustrated: 2,
+  celebrate: 2,
   sleep: 2,
   drink: 2,
   talk: 2,
@@ -43,6 +55,32 @@ export const CHARACTER_FRAMES: Readonly<Record<CharacterPose, number>> = {
   doze: 2,
   lie: 2,
 };
+
+export const CHARACTER_SHADOW_FRAMES = CHARACTER_FRAMES.walk;
+const SHADOW_ROWS: readonly (readonly string[])[] = [
+  [".....oooooo.....", "..oooooooooooo..", ".....oooooo....."],
+  ["....oooooooo....", "...oooooooooo...", ".....oooooo....."],
+  ["......oooo......", "...oooooooooo...", "......oooo......"],
+  ["......oooo......", "....oooooooo....", "......oooo......"],
+  [".....oooooo.....", "..oooooooooooo..", ".....oooooo....."],
+  ["....oooooooo....", "...oooooooooo...", ".....oooooo....."],
+  ["....oooooooo....", "..oooooooooooo..", "....oooooooo...."],
+  ["......oooo......", "....oooooooo....", "......oooo......"],
+];
+const shadowCache = new Lru<Bitmap>(CHARACTER_SHADOW_FRAMES);
+
+/** A soft pixel ellipse at the feet; walking frames narrow and widen with the stride. */
+export function characterShadow(frame = 0): Bitmap {
+  const index = ((frame % CHARACTER_SHADOW_FRAMES) + CHARACTER_SHADOW_FRAMES) % CHARACTER_SHADOW_FRAMES;
+  const key = `character-shadow:${index}`;
+  let bitmap = shadowCache.get(key);
+  if (!bitmap) {
+    const drawing = paint(SHADOW_ROWS[index]!, { o: "characterShadow" });
+    bitmap = { ...drawing, key, anchor: { x: 8, y: 3 } };
+    shadowCache.set(key, bitmap);
+  }
+  return bitmap;
+}
 
 export interface CharacterSpec {
   readonly role: CharacterRole;
@@ -75,16 +113,16 @@ const HEAD_RIGHT = [
   "................",
   "................",
   "................",
-  "....oooooooo....",
-  "...ohhhhhhhho...",
-  "...ohhhhhhhho...",
-  "...ohhhhhssso...",
-  "...ohhhssssso...",
-  "...ohhssossoo...",
-  "...ohsssossoo...",
-  "...ohssssssso...",
-  "...oSssssssso...",
-  "....oooooooo....",
+  ".....ooooooo....",
+  "....oJhhhHHho...",
+  "....ohhhhhhho...",
+  "....ohhhhhsSo...",
+  "....ohhhssLso...",
+  "....ohhssosso...",
+  "....oHhssosSso..",
+  ".....osssSso....",
+  ".....oSssSo.....",
+  "......oooo......",
 ];
 const HEAD_UP = [
   "................",
@@ -126,6 +164,13 @@ const FRINGE: readonly Patch[] = [
   [9, 6, "H"],
   [7, 7, "H"],
 ];
+const PUFF: readonly Patch[] = [
+  [4, 3, "o"], [5, 2, "o"], [6, 2, "o"], [7, 1, "o"], [8, 1, "o"], [9, 2, "o"], [10, 2, "o"],
+  [6, 3, "h"], [7, 2, "J"], [8, 2, "h"], [9, 3, "h"],
+];
+const BUN: readonly Patch[] = [
+  [4, 8, "h"], [3, 9, "h"], [2, 10, "o"], [3, 10, "J"], [4, 10, "H"], [3, 11, "o"], [4, 11, "o"],
+];
 
 /**
  * Hair styles are small edits to the head, so they survive under a hat or a headset. The side
@@ -135,6 +180,8 @@ const HAIR_STYLES: readonly Readonly<Record<"down" | "up" | "side", readonly Pat
   { down: [], up: [], side: [] },
   { down: LONG_HAIR, up: LONG_HAIR, side: LONG_HAIR.filter(([x]) => x <= 5) },
   { down: FRINGE, up: [], side: [] },
+  { down: PUFF, up: PUFF, side: PUFF },
+  { down: [[4, 7, "H"], [11, 7, "H"]], up: BUN, side: BUN },
 ];
 
 const TORSO_IDLE = [
@@ -150,6 +197,14 @@ const TORSO_WALK = [
   "..otTttttttTso..",
   "..osTttttttToo..",
   "..oottttttttto..",
+];
+// The passing pose swings the opposite arm and narrows the waist for one beat.
+const TORSO_WALK_PASS = [
+  "...otttttttto...",
+  "..otTttttttUto..",
+  "..otTttttttTto..",
+  "..osTttttttTso..",
+  "..oottttttttoo..",
 ];
 // Back view at a keyboard: forearms are out of sight, the elbows move.
 const TORSO_TYPE_OUT = [
@@ -182,7 +237,67 @@ const LEGS_STEP = [
   "...obbboooooo...",
   "...ooooo........",
 ];
+const LEGS_PASS = [
+  "...oppppppppo...",
+  "...oppppppppo...",
+  "...opppoopppo...",
+  "...opppoppppo...",
+  "..obbb..bbbo....",
+  "...oooooooooo...",
+];
+const LEGS_LOAD = [
+  "...oppppppppo...",
+  "...oppppppppo...",
+  "...opppooqppo...",
+  "..opppo.oqppo...",
+  "..obbbo..obbo...",
+  "..ooooo..oooo...",
+];
+const LEGS_RISE = [
+  "...oppppppppo...",
+  "...oppppppppo...",
+  "....opppqppo....",
+  "....opppobbbo...",
+  "....obbbooooo...",
+  "....ooooo.......",
+];
+const WALK_LEGS = [LEGS_STEP, LEGS_LOAD, LEGS_PASS, LEGS_RISE];
+const WALK_BOB = [0, 1, 1, 0];
+const SIDE_SHIRT = [
+  ".....otttto.....",
+  "....oUtttTto....",
+  "....ottttTto....",
+  "....ottttTto....",
+  ".....oTttTo.....",
+];
+
+/** The far shoe is darker and a row higher where it clears the floor. */
+function sideStride(out: Canvas, legend: Legend, frame: number): void {
+  const phase = frame % 4;
+  const nearLeads = frame < 4;
+  const forward = [3, 2, 0, -2][phase]!;
+  const back = [-3, -2, 0, 2][phase]!;
+  const draw = (ankle: number, high: number, far: boolean) => {
+    const knee = 7 + Math.sign(ankle);
+    blit(out, paint(far ? ["oqo", "oqo"] : ["opo", "opo"], legend), knee, 18);
+    const shin = 7 + Math.round(ankle / 2);
+    blit(out, paint(far ? ["oqo", "oqo"] : ["opo", "opo"], legend), shin, 20 - high);
+    blit(out, paint(["obbo", "oooo"], legend), 7 + ankle, 22 - high);
+  };
+  draw(nearLeads ? back : forward, nearLeads && phase >= 2 ? 1 : 0, true);
+  draw(nearLeads ? forward : back, !nearLeads && phase >= 2 ? 1 : 0, false);
+}
 const LEGS_SEATED = ["...oppppppppo...", "...opppoopppo...", "...obbboobbbo...", "...oooooooooo..."];
+const WALK_ARMS: Readonly<Record<0 | 1, readonly Patch[]>> = {
+  0: [
+    [2, 15, "t"], [2, 16, "t"], [2, 17, "s"],
+    [13, 14, "t"], [13, 15, "t"], [13, 16, "s"],
+  ],
+  1: [
+    [2, 14, "t"], [2, 15, "t"], [2, 16, "s"],
+    [13, 15, "t"], [13, 16, "t"], [13, 17, "s"],
+  ],
+};
 
 const CUP = ["oooo", "occo", "owwo", "oooo"];
 const CUP_LEFT = 11;
@@ -224,10 +339,28 @@ const EYES_SHUT: readonly Patch[] = [
   [10, 9, "o"],
 ];
 const EYES_SHUT_SIDE: readonly Patch[] = [
-  [8, 8, "s"],
+  [10, 8, "s"],
   [11, 8, "s"],
-  [7, 9, "o"],
+  [11, 9, "o"],
 ];
+const EYES_OPEN_FRONT: readonly Patch[] = [
+  [7, 8, "w"],
+  [10, 8, "w"],
+  [5, 10, "L"],
+  [11, 10, "L"],
+  [8, 10, "S"],
+  [9, 10, "S"],
+];
+const EYES_OPEN_SIDE: readonly Patch[] = [
+  [11, 8, "w"],
+  [12, 9, "L"],
+  [10, 10, "S"],
+];
+const HAIR_GLINTS: Readonly<Record<"down" | "up" | "side", readonly Patch[]>> = {
+  down: [[7, 5, "J"], [8, 5, "H"]],
+  up: [[6, 6, "J"], [9, 6, "H"]],
+  side: [[7, 5, "J"], [8, 6, "H"]],
+};
 
 const TORSO_TOP = 13;
 const SEATED_DROP = 2;
@@ -251,7 +384,7 @@ const TAIL = [
   "...........oao..",
   "...........oo...",
 ];
-const BACK_ITEM_TOP: Readonly<Record<CharacterRole, number>> = { overseer: 13, meow: 15, nexus: 0, agent: 0 };
+const BACK_ITEM_TOP = { overseer: 13, meow: 15 } as const;
 
 const HAT = [
   "................",
@@ -284,25 +417,38 @@ const EARS = [
 ];
 const EARS_BACK = EARS.map((line) => line.replace(/A/g, "a"));
 
+function gearOf(look: CharacterLook, role: CharacterRole): "cap" | "headset" | "ears" | "none" {
+  if (look.headgear && look.headgear !== "role") return look.headgear;
+  if (role === "overseer") return "cap";
+  if (role === "nexus") return "headset";
+  if (role === "meow") return "ears";
+  return "none";
+}
+
 function legendFor(look: CharacterLook, role: CharacterRole): Legend {
-  const gear: Record<CharacterRole, readonly [Slot, Slot]> = {
-    overseer: ["hat", "hatBand"],
-    nexus: ["headset", "headsetLight"],
-    meow: [`hair${look.hair}` as Slot, "earInner"],
-    agent: ["outline", "outline"],
+  const gear: Record<ReturnType<typeof gearOf>, readonly [Slot, Slot]> = {
+    cap: ["hat", "hatBand"],
+    headset: ["headset", "headsetLight"],
+    ears: [`hair${look.hair}` as Slot, "earInner"],
+    none: ["outline", "outline"],
   };
+  const [a, A] = gear[gearOf(look, role)];
   return {
     o: "outline",
+    w: "white",
     s: `skin${look.skin}` as Slot,
     S: `skinShade${look.skin}` as Slot,
+    L: `skinLight${look.skin}` as Slot,
     h: `hair${look.hair}` as Slot,
     H: `hairShade${look.hair}` as Slot,
+    J: `hairLight${look.hair}` as Slot,
     t: `shirt${look.shirt}` as Slot,
     T: `shirtShade${look.shirt}` as Slot,
+    U: `shirtLight${look.shirt}` as Slot,
     p: `pants${look.pants}` as Slot,
+    q: `pantsShade${look.pants}` as Slot,
     b: "shoes",
-    a: gear[role][0],
-    A: gear[role][1],
+    a, A,
     c: "cape",
     C: "capeShade",
   };
@@ -327,28 +473,44 @@ function headCanvas(
   const view = facing === "up" || facing === "down" ? facing : "side";
   const base = view === "up" ? HEAD_UP : view === "down" ? HEAD_DOWN : HEAD_RIGHT;
   const hair = HAIR_STYLES[look.hairStyle % HAIR_STYLES.length]![view];
-  const eyes = !eyesShut ? [] : view === "down" ? EYES_SHUT : view === "side" ? EYES_SHUT_SIDE : [];
-  const head = paint(patched(base, [...hair, ...eyes]), legend);
+  const eyes = eyesShut
+    ? view === "down"
+      ? EYES_SHUT
+      : view === "side"
+        ? EYES_SHUT_SIDE
+        : []
+    : view === "down"
+      ? EYES_OPEN_FRONT
+      : view === "side"
+        ? EYES_OPEN_SIDE
+        : [];
+  const head = paint(patched(base, [...hair, ...HAIR_GLINTS[view], ...eyes]), legend);
+  const kind = gearOf(look, role);
   const gear =
-    role === "overseer"
+    kind === "cap"
       ? HAT
-      : role === "nexus"
+      : kind === "headset"
         ? facing === "up"
           ? HEADSET_BACK
           : HEADSET_FRONT
-        : role === "meow"
+        : kind === "ears"
           ? facing === "up"
             ? EARS_BACK
             : EARS
           : null;
   if (gear) blit(head, paint(gear, legend));
+  if (look.accessory === "glasses" && view !== "up") {
+    blit(head, paint(view === "side" ? ["oAoo", "oooo"] : ["ooo.ooo", "oAoooAo"], {
+      o: "outline", A: "glass",
+    }), view === "side" ? 9 : 5, 8);
+  }
   return head;
 }
 
 /** Draws one frame facing down, up or right. Left is the mirror of right, done by the caller. */
 function compose(spec: Required<CharacterSpec>, eyesShut = false): Canvas {
   const { role, look, pose, frame } = spec;
-  const seated = pose === "sit" || pose === "sleep" || pose === "doze";
+  const seated = pose === "sit" || pose === "sleep" || pose === "doze" || pose === "read" || pose === "watch" || pose === "terminal";
   // Seated characters face the desk or the viewer; asleep at a desk is always slumped toward it.
   const facing: Facing =
     pose === "sleep"
@@ -357,6 +519,7 @@ function compose(spec: Required<CharacterSpec>, eyesShut = false): Canvas {
         ? "down"
         : spec.facing;
   const back = facing === "up";
+  const side = facing === "left" || facing === "right";
   const legend = legendFor(look, role);
   const out = canvas(CHARACTER_WIDTH, CHARACTER_HEIGHT);
   const drop = seated ? SEATED_DROP : 0;
@@ -364,7 +527,7 @@ function compose(spec: Required<CharacterSpec>, eyesShut = false): Canvas {
 
   const backItem = role === "overseer" ? CAPE : role === "meow" ? TAIL : null;
   const drawBackItem = () => {
-    if (backItem) blit(out, paint(backItem, legend), 0, BACK_ITEM_TOP[role] + drop);
+    if (backItem) blit(out, paint(backItem, legend), 0, BACK_ITEM_TOP[role === "overseer" ? "overseer" : "meow"] + drop);
   };
 
   let torso = TORSO_IDLE;
@@ -373,14 +536,14 @@ function compose(spec: Required<CharacterSpec>, eyesShut = false): Canvas {
   let headDrop = drop;
   if (pose === "walk") {
     const step = frame % 4;
-    if (step === 0 || step === 2) {
-      torso = TORSO_WALK;
-      legs = LEGS_STEP;
-      flip = step === 2;
-    } else {
-      headDrop += 1;
-    }
-  } else if (pose === "sit" && back) {
+    torso = side ? SIDE_SHIRT : step === 2 ? TORSO_WALK_PASS : TORSO_WALK;
+    legs = WALK_LEGS[step]!;
+    flip = !side && frame >= 4;
+    headDrop += WALK_BOB[step]!;
+  } else if (pose === "settle") {
+    headDrop = 1;
+    legs = LEGS_LOAD;
+  } else if ((pose === "sit" && back) || pose === "terminal") {
     torso = frame === 0 ? TORSO_TYPE_OUT : TORSO_TYPE_IN;
   } else if (pose === "sleep") {
     headDrop += 3 + frame;
@@ -391,16 +554,49 @@ function compose(spec: Required<CharacterSpec>, eyesShut = false): Canvas {
   } else if (pose === "talk") {
     if (acting) torso = TORSO_WALK;
     else headDrop += back ? frame : 0;
-  } else if (pose === "stretch") {
+  } else if (pose === "stretch" || pose === "celebrate") {
     if (frame === 1) torso = TORSO_ARMLESS;
+  } else if (pose === "read" || pose === "watch" || pose === "frustrated") {
+    headDrop += frame;
   } else {
     headDrop += frame;
   }
 
   if (!back) drawBackItem();
   const body = canvas(CHARACTER_WIDTH, CHARACTER_HEIGHT);
-  blit(body, paint(legs, legend), 0, CHARACTER_HEIGHT - legs.length);
-  blit(body, paint(torso, legend), 0, TORSO_TOP + drop);
+  if (pose === "walk" && side) sideStride(body, legend, frame);
+  else blit(body, paint(legs, legend), 0, CHARACTER_HEIGHT - legs.length);
+  blit(body, paint(torso, legend), 0, TORSO_TOP + (pose === "settle" ? 1 : drop));
+  if (!back && !(pose === "walk" && side)) {
+    const collar: readonly Patch[] = [
+      [7, TORSO_TOP + drop, "s"],
+      [8, TORSO_TOP + drop, "s"],
+      [6, TORSO_TOP + drop + 1, "T"],
+      [9, TORSO_TOP + drop + 1, "U"],
+      [8, TORSO_TOP + drop + 2, "U"],
+      [8, TORSO_TOP + drop + 3, "T"],
+      [4, TORSO_TOP + drop + 3, "U"],
+      [11, TORSO_TOP + drop + 3, "T"],
+    ];
+    for (const [x, y, char] of collar) blit(body, paint([char], legend), x, y);
+  }
+  if (pose === "walk" && side) {
+    const advance = (frame < 4 ? -1 : 1) * ([2, 1, 0, -1][frame % 4]!);
+    blit(body, paint(["oUo", "oTo", "oso"], legend), 7 + advance, 14 + (frame % 4 === 2 ? 1 : 0));
+  } else if (pose === "walk") {
+    const phase = frame % 4 < 2 ? 0 : 1;
+    for (const [x, y, char] of WALK_ARMS[phase]) blit(body, paint([char], legend), x, y);
+  }
+  if (!seated && !(pose === "walk" && side)) {
+    blit(body, paint(["q"], legend), 7, 20);
+    blit(body, paint(["q"], legend), 8, 20);
+  }
+  const outfit = look.outfit ?? 0;
+  if (outfit && pose !== "stretch" && !back) {
+    const outfitTop = TORSO_TOP + drop + 1;
+    const patch = outfit === 1 ? ["UT", "oT"] : outfit === 2 ? ["w", "U"] : ["s", "o"];
+    blit(body, paint(patch, legend), side ? 9 : 8, outfitTop);
+  }
   blit(out, flip ? mirror(body) : body);
   if (back) drawBackItem();
   const cup = spec.carry === "cup" || pose === "drink";
@@ -411,12 +607,26 @@ function compose(spec: Required<CharacterSpec>, eyesShut = false): Canvas {
   }
   if (seated && back) blit(out, paint(CHAIR_ROWS, PROP_LEGEND), 0, CHARACTER_HEIGHT - CHAIR_ROWS.length);
   blit(out, headCanvas(facing, look, role, legend, eyesShut || pose === "doze"), 0, headDrop);
+  if (look.accessory === "pin") blit(out, paint(["ow", "oo"], PROP_LEGEND), back ? 9 : 6, TORSO_TOP + drop + 1);
+  if (look.accessory === "scarf") blit(out, paint(["oeeeeo", ".oo.o."], PROP_LEGEND), 5, TORSO_TOP + headDrop - 1);
+  const badge = ROLES[role].art;
+  if (badge) blit(out, paint(badge, PROP_LEGEND), back ? 8 : side ? 3 : 11, TORSO_TOP + headDrop);
   if (sipping) {
     blit(out, paint(ARM_RAISED, legend), 12, 10);
     blit(out, paint(CUP, PROP_LEGEND), 8, 9);
   }
   if (pose === "talk" && acting) blit(out, paint(["oo"], legend), facing === "down" ? 7 : 9, 10 + headDrop);
-  if (pose === "stretch" && frame === 1) blit(out, paint(ARMS_UP, legend), 0, ARMS_UP_TOP);
+  if ((pose === "stretch" || pose === "celebrate") && frame === 1) blit(out, paint(ARMS_UP, legend), 0, ARMS_UP_TOP);
+  if (pose === "read") blit(out, paint(frame === 0 ? BOOK : ["ooooooo", "owwoo.o", "owwowwo", "ooooooo"], PROP_LEGEND), 0, 14);
+  if (pose === "plan" || pose === "board") {
+    const board = ["oooooo", "owwwwo", "owwwwo", "owwwwo", "oooooo"];
+    blit(out, paint(board, PROP_LEGEND), 10, 12);
+    blit(out, paint([frame === 0 ? "eee" : "e.e"], PROP_LEGEND), 11, 14);
+    if (pose === "plan") blit(out, paint(["e", "o"], PROP_LEGEND), 11 + frame, 15);
+  }
+  if (pose === "terminal") blit(out, paint(["ooooo", frame === 0 ? "oee.o" : "o.eeo", "ooooo"], PROP_LEGEND), 0, 12);
+  if (pose === "watch") blit(out, paint(["oooo", frame === 0 ? "oeeo" : "oe.o", "oooo"], PROP_LEGEND), 1, 11);
+  if (pose === "frustrated") blit(out, paint(ARM_RAISED, legend), frame ? 1 : 12, 10);
   return out;
 }
 
@@ -450,8 +660,8 @@ export function character(spec: CharacterSpec): Bitmap {
   const frame = (((spec.frame ?? 0) % frames) + frames) % frames;
   const carry = spec.carry ?? null;
   const full = { role: spec.role, look: spec.look, pose, facing: spec.facing ?? "down", frame, carry };
-  const { skin, hair, hairStyle, shirt, pants } = spec.look;
-  const key = `c:${full.role}:${pose}:${full.facing}:${frame}:${skin}.${hair}.${hairStyle}.${shirt}.${pants}:${carry ?? ""}`;
+  const { skin, hair, hairStyle, shirt, pants, outfit = 0, accessory = "none", headgear = "role" } = spec.look;
+  const key = `c:${full.role}:${pose}:${full.facing}:${frame}:${skin}.${hair}.${hairStyle}.${shirt}.${pants}.${outfit}.${accessory}.${headgear}:${carry ?? ""}`;
   let bitmap = cache.get(key);
   if (!bitmap) {
     const drawn = draw(full);

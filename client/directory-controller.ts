@@ -119,6 +119,9 @@ export function createDirectoryController(
   let workspaces: Map<string, PaseoWorkspace> = new Map();
   let phase: "loading" | "ready" | "error" = "loading";
   let generation = 0;
+  let workspaceGeneration = 0;
+  let life = 0;
+  let pendingAgents: Map<string, PaseoAgent | null> | null = null;
   // Workspaces asked about after an agent in one nobody had told us about turned up.
   const asked = new Set<string>();
 
@@ -144,32 +147,45 @@ export function createDirectoryController(
     if (alive) sink.phase(next);
   };
 
-  const reload = () => {
+  const load = (full: boolean) => {
     const run = ++generation;
+    const workspaceRun = full ? ++workspaceGeneration : workspaceGeneration;
+    const changed = new Map<string, PaseoAgent | null>();
+    pendingAgents = changed;
     void (async () => {
       try {
-        const [loaded, loadedWorkspaces] = await Promise.all([fetchAgents(api), fetchWorkspaces(api)]);
+        const [loaded, loadedWorkspaces] = await Promise.all([fetchAgents(api), full ? fetchWorkspaces(api) : null]);
         if (run !== generation || !alive) return;
+        for (const [id, update] of changed) {
+          if (update) loaded.agents.set(id, update);
+          else loaded.agents.delete(id);
+        }
         showAgents(keepKnown(agents, loaded.agents));
-        showWorkspaces(loadedWorkspaces);
         sink.truncated(loaded.truncated);
-        sink.error(null);
-        showPhase("ready");
+        if (full) {
+          if (loadedWorkspaces && workspaceRun === workspaceGeneration) showWorkspaces(loadedWorkspaces);
+          sink.error(null);
+          showPhase("ready");
+        }
       } catch (cause) {
-        if (run !== generation || !alive) return;
+        if (run !== generation || !alive || !full) return;
         sink.error(message(cause));
         showPhase(phase === "ready" ? "ready" : "error");
+      } finally {
+        if (pendingAgents === changed) pendingAgents = null;
       }
     })();
   };
+  const reload = () => load(true);
 
   const refreshWorkspaces = () => {
     if (workspaceTimer) clearTimeout(workspaceTimer);
     workspaceTimer = setTimeout(() => {
       workspaceTimer = null;
+      const run = ++workspaceGeneration;
       void fetchWorkspaces(api)
         .then((loaded) => {
-          if (alive) showWorkspaces(loaded);
+          if (alive && workspaceGeneration === run) showWorkspaces(loaded);
         })
         .catch(() => {});
     }, debounceMs);
@@ -180,12 +196,13 @@ export function createDirectoryController(
   const openFeed = () => {
     if (!alive || feed || opening) return;
     opening = true;
+    const run = life;
     void api.agents
       .list({ filter: { includeArchived: false }, page: { limit: 1 }, subscribe: {} })
       .then((result) => {
         const mine = result.subscription;
         if (!mine) return;
-        if (!alive) {
+        if (!alive || run !== life) {
           void mine.release().catch(() => {});
           return;
         }
@@ -206,20 +223,24 @@ export function createDirectoryController(
       })
       .catch(() => {})
       .finally(() => {
-        opening = false;
+        if (run === life) opening = false;
       });
   };
 
   const onAgent = (update: AgentUpdate) => {
+    if (!alive) return;
     const next = new Map(agents);
     if (update.kind === "remove") {
+      pendingAgents?.set(update.agentId, null);
       if (next.delete(update.agentId)) showAgents(next);
       return;
     }
     if (update.agent.archivedAt) {
+      pendingAgents?.set(update.agent.id, null);
       if (next.delete(update.agent.id)) showAgents(next);
       return;
     }
+    pendingAgents?.set(update.agent.id, update.agent);
     next.set(update.agent.id, update.agent);
     showAgents(next);
     // An agent in a workspace nobody has told us about: its event was missed, so ask, once for each.
@@ -234,22 +255,14 @@ export function createDirectoryController(
     start() {
       if (alive) return;
       alive = true;
-      reload();
       stopAgents = api.agents.subscribe(onAgent);
+      reload();
       openFeed();
       stopWorkspaces = api.workspaces.subscribe(refreshWorkspaces);
       releaseWorkspaceFeed = workspaceFeed.acquire(refreshWorkspaces);
       backstop = setInterval(() => {
         openFeed();
-        const run = generation;
-        void fetchAgents(api)
-          .then((loaded) => {
-            // A reload since then has newer news.
-            if (run !== generation || !alive) return;
-            showAgents(keepKnown(agents, loaded.agents));
-            sink.truncated(loaded.truncated);
-          })
-          .catch(() => {});
+        if (!pendingAgents) load(phase !== "ready");
       }, backstopMs);
     },
     reload() {
@@ -259,6 +272,11 @@ export function createDirectoryController(
       if (!alive) return;
       alive = false;
       generation += 1;
+      workspaceGeneration += 1;
+      life += 1;
+      opening = false;
+      pendingAgents = null;
+      asked.clear();
       const mine = feed;
       feed = null;
       void mine?.release().catch(() => {});

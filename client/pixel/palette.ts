@@ -1,23 +1,28 @@
 import type { PluginTheme } from "@getpaseo/plugin";
+import type { RoomLight } from "../lighting";
 import { BLACK, WHITE, darken, lighten, luminance, mix, parseColor, readableOn } from "./color";
 import type { Rgba } from "./png";
+import type { AvatarConfig } from "../../shared/avatar";
 
 /**
  * Every sprite is drawn in palette slots, never in colours. Slot order is fixed, so a sprite's
  * pixels do not depend on the theme: only the palette handed to the encoder does.
  */
 
+/** Shared paint swatches. Indexed slots derive lighter and darker ramps from these pigments. */
+export const PIXEL_PAINT = {
+  ink: "#18161c", paper: "#faf8f4", oak: "#c79a6c", walnut: "#8a6444",
+  espresso: "#5b3a26", brick: "#c0693f", moss: "#3f8a54", sage: "#55a868",
+  glass: "#8fd0f0", indigo: "#33457a", amber: "#e6b83f", wine: "#8f3046",
+  steel: "#39414f", mint: "#35d0c0", blush: "#f3a6bb", violet: "#8a63c4",
+  blue: "#4a86c7", rust: "#d2603f", jade: "#4f9d6b", teal: "#3fa3a8",
+  rose: "#c9588f", slate: "#7b8794",
+} as const;
 const SKINS = ["#f6d3b3", "#e8b98f", "#c98f62", "#9a6541", "#6b4429"] as const;
 const HAIRS = ["#2b2330", "#5a3825", "#a5632a", "#d9a441", "#b9422f", "#8d95a3"] as const;
 const SHIRTS = [
-  "#4a86c7",
-  "#d2603f",
-  "#4f9d6b",
-  "#8a63c4",
-  "#d9a13b",
-  "#3fa3a8",
-  "#c9588f",
-  "#7b8794",
+  PIXEL_PAINT.blue, PIXEL_PAINT.rust, PIXEL_PAINT.jade, PIXEL_PAINT.violet,
+  PIXEL_PAINT.amber, PIXEL_PAINT.teal, PIXEL_PAINT.rose, PIXEL_PAINT.slate,
 ] as const;
 const PANTS = ["#39445f", "#4b4038", "#2f4a45"] as const;
 
@@ -36,6 +41,7 @@ const FIXED_SLOTS = [
   "transparent",
   "outline",
   "white",
+  "characterShadow",
   "shoes",
   "hat",
   "hatBand",
@@ -70,6 +76,8 @@ const FIXED_SLOTS = [
   "fabricLight",
   "glass",
   "glassShade",
+  "lampGlow",
+  "windowGlow",
   "coffee",
   "emoteAlert",
   "emoteAlertInk",
@@ -127,10 +135,10 @@ type Shadowed = (typeof SHADOW_OF)[number][0];
 export type Slot =
   | (typeof FIXED_SLOTS)[number]
   | `${Shadowed}Shadow`
-  | Indexed<"skin" | "skinShade", SkinIndex>
-  | Indexed<"hair" | "hairShade", HairIndex>
-  | Indexed<"shirt" | "shirtShade", ShirtIndex>
-  | Indexed<"pants", PantsIndex>;
+  | Indexed<"skin" | "skinShade" | "skinLight", SkinIndex>
+  | Indexed<"hair" | "hairShade" | "hairLight", HairIndex>
+  | Indexed<"shirt" | "shirtShade" | "shirtLight", ShirtIndex>
+  | Indexed<"pants" | "pantsShade", PantsIndex>;
 
 const numbered = (name: string, count: number) => Array.from({ length: count }, (_, index) => `${name}${index}`);
 
@@ -138,11 +146,15 @@ export const SLOTS = [
   ...FIXED_SLOTS,
   ...numbered("skin", SKIN_COUNT),
   ...numbered("skinShade", SKIN_COUNT),
+  ...numbered("skinLight", SKIN_COUNT),
   ...numbered("hair", HAIR_COUNT),
   ...numbered("hairShade", HAIR_COUNT),
+  ...numbered("hairLight", HAIR_COUNT),
   ...numbered("shirt", SHIRT_COUNT),
   ...numbered("shirtShade", SHIRT_COUNT),
+  ...numbered("shirtLight", SHIRT_COUNT),
   ...numbered("pants", PANTS_COUNT),
+  ...numbered("pantsShade", PANTS_COUNT),
   ...SHADOW_OF.map(([base]) => `${base}Shadow`),
 ] as readonly Slot[];
 
@@ -166,8 +178,8 @@ export function paletteColor(palette: Palette, slot: Slot): Rgba {
   return palette.colors[slotIndex(slot)]!;
 }
 
-const INK: Rgba = [24, 22, 28, 255];
-const PAPER: Rgba = [250, 248, 244, 255];
+const INK = parseColor(PIXEL_PAINT.ink);
+const PAPER = parseColor(PIXEL_PAINT.paper);
 
 function build(theme: PluginTheme): Palette {
   const read = (name: keyof PluginTheme["colors"]) => {
@@ -186,12 +198,12 @@ function build(theme: PluginTheme): Palette {
   const outline = dark ? darken(surface0, 0.55) : mix(INK, foreground, 0.5);
   // Fixed hues (wood, leaves, skin) are pulled a little toward the surface so they share its cast.
   const tint = (hex: string, towards = 0.12) => mix(parseColor(hex), surface1, dark ? towards + 0.1 : towards);
-  const wood = tint(dark ? "#8a6444" : "#c79a6c");
+  const wood = tint(dark ? PIXEL_PAINT.walnut : PIXEL_PAINT.oak);
   const metal = mix(muted, surface2, 0.45);
   const fabric = mix(accent, surface2, dark ? 0.45 : 0.35);
-  const leaf = tint(dark ? "#3f8a54" : "#55a868");
-  const pot = tint("#c0693f");
-  const glass = tint("#8fd0f0");
+  const leaf = tint(dark ? PIXEL_PAINT.moss : PIXEL_PAINT.sage);
+  const pot = tint(PIXEL_PAINT.brick);
+  const glass = tint(PIXEL_PAINT.glass);
   const status = {
     emoteAlert: read("statusWarning"),
     emoteFail: read("statusDanger"),
@@ -205,14 +217,15 @@ function build(theme: PluginTheme): Palette {
     transparent: [0, 0, 0, 0],
     outline,
     white: dark ? mix(PAPER, surface0, 0.08) : PAPER,
+    characterShadow: dark ? mix(surface1, foreground, 0.17) : mix(surface1, outline, 0.16),
     shoes: mix(INK, surface2, 0.18),
-    hat: tint("#33457a", 0.04),
-    hatBand: tint("#e6b83f", 0.04),
-    cape: tint("#8f3046", 0.04),
-    capeShade: darken(tint("#8f3046", 0.04), 0.28),
-    headset: tint("#39414f", 0.04),
-    headsetLight: tint("#35d0c0", 0.02),
-    earInner: tint("#f3a6bb", 0.04),
+    hat: tint(PIXEL_PAINT.indigo, 0.04),
+    hatBand: tint(PIXEL_PAINT.amber, 0.04),
+    cape: tint(PIXEL_PAINT.wine, 0.04),
+    capeShade: darken(tint(PIXEL_PAINT.wine, 0.04), 0.28),
+    headset: tint(PIXEL_PAINT.steel, 0.04),
+    headsetLight: tint(PIXEL_PAINT.mint, 0.02),
+    earInner: tint(PIXEL_PAINT.blush, 0.04),
     floor: surface1,
     floorAlt: mix(surface1, foreground, 0.025),
     floorSeam: mix(surface1, foreground, 0.06),
@@ -239,7 +252,9 @@ function build(theme: PluginTheme): Palette {
     fabricLight: mix(fabric, WHITE, 0.2),
     glass,
     glassShade: darken(glass, 0.22),
-    coffee: tint("#5b3a26", 0.04),
+    lampGlow: mix(wood, WHITE, 0.5),
+    windowGlow: glass,
+    coffee: tint(PIXEL_PAINT.espresso, 0.04),
     ...status,
     emoteAlertInk: inkOn(status.emoteAlert),
     emoteFailInk: inkOn(status.emoteFail),
@@ -264,17 +279,21 @@ function build(theme: PluginTheme): Palette {
   SKINS.forEach((hex, index) => {
     colors[`skin${index}`] = parseColor(hex);
     colors[`skinShade${index}`] = darken(parseColor(hex), 0.18);
+    colors[`skinLight${index}`] = lighten(parseColor(hex), 0.12);
   });
   HAIRS.forEach((hex, index) => {
     colors[`hair${index}`] = parseColor(hex);
     colors[`hairShade${index}`] = darken(parseColor(hex), 0.3);
+    colors[`hairLight${index}`] = lighten(parseColor(hex), 0.2);
   });
   SHIRTS.forEach((hex, index) => {
     colors[`shirt${index}`] = parseColor(hex);
     colors[`shirtShade${index}`] = darken(parseColor(hex), 0.22);
+    colors[`shirtLight${index}`] = lighten(parseColor(hex), 0.2);
   });
   PANTS.forEach((hex, index) => {
     colors[`pants${index}`] = parseColor(hex);
+    colors[`pantsShade${index}`] = darken(parseColor(hex), 0.22);
   });
   for (const [base, light] of SHADOW_OF) colors[`${base}Shadow`] = dark ? darken(colors[base]!, 0.4) : colors[light]!;
 
@@ -295,15 +314,75 @@ export function officePalette(theme: PluginTheme): Palette {
   return palette;
 }
 
+const ROOM_HUES = ["#4f9f91", "#d79752", "#9677bf", "#d17683", "#6597c9", "#8da653", "#c16e50"] as const;
+const roomPalettes = new WeakMap<PluginTheme, Map<string, Palette>>();
+
+/** A room's quiet material tint; agent status colors and the Paseo theme remain untouched. */
+export function roomPalette(theme: PluginTheme, variant: number, light: RoomLight = "theme"): Palette {
+  const base = officePalette(theme);
+  const index = ((Math.floor(variant) % ROOM_HUES.length) + ROOM_HUES.length) % ROOM_HUES.length;
+  let variants = roomPalettes.get(theme);
+  if (!variants) {
+    variants = new Map();
+    roomPalettes.set(theme, variants);
+  }
+  const key = `${base.key}:room:${index}:${light}`;
+  const known = variants.get(key);
+  if (known) return known;
+
+  const colors = [...base.colors];
+  const get = (slot: Slot) => colors[slotIndex(slot)]!;
+  const set = (slot: Slot, color: Rgba) => {
+    colors[slotIndex(slot)] = color;
+  };
+  // Anchor the room hue in the active theme's accent, then soften it into its materials.
+  const hue = mix(parseColor(ROOM_HUES[index]!), get("screenLit"), 0.22);
+  const fabric = mix(get("fabric"), hue, 0.62);
+  set("fabric", fabric);
+  set("fabricShade", mix(get("fabricShade"), hue, 0.42));
+  set("fabricLight", mix(get("fabricLight"), hue, 0.38));
+  set("carpet", mix(get("carpet"), hue, 0.48));
+  set("carpetShade", mix(get("carpetShade"), hue, 0.42));
+  set("kitchen", mix(get("kitchen"), hue, 0.18));
+  set("kitchenAlt", mix(get("kitchenAlt"), hue, 0.18));
+  set("wood", mix(get("wood"), hue, 0.09));
+  set("woodShade", mix(get("woodShade"), hue, 0.09));
+  set("woodLight", mix(get("woodLight"), hue, 0.09));
+  for (let pod = 0; pod < 4; pod += 1) {
+    set(`pod${pod}` as Slot, mix(get(`pod${pod}` as Slot), hue, 0.2));
+    set(`pod${pod}Shade` as Slot, mix(get(`pod${pod}Shade` as Slot), hue, 0.16));
+  }
+
+  if (light !== "theme") {
+    const sun = parseColor(PIXEL_PAINT.paper);
+    const navy = parseColor(PIXEL_PAINT.ink);
+    const night = light === "night";
+    for (const slot of ["floor", "floorAlt", "floorSeam", "wall", "wallShade", "wallTrim", "carpet", "carpetShade", "kitchen", "kitchenAlt"] as const) {
+      set(slot, mix(get(slot), night ? navy : sun, night ? (base.dark ? 0.38 : 0.60) : (base.dark ? 0.30 : 0.10)));
+    }
+    for (const [slot, neighbor] of SHADOW_OF) set(`${slot}Shadow`, night ? darken(get(slot), 0.23) : mix(get(slot), get(neighbor), 0.56));
+    set("lampGlow", night ? parseColor(PIXEL_PAINT.amber) : mix(get("metalLight"), sun, 0.25));
+    set("windowGlow", night ? mix(get("glass"), navy, 0.63) : mix(get("glass"), WHITE, 0.41));
+    set("woodLight", mix(get("woodLight"), night ? parseColor(PIXEL_PAINT.amber) : sun, night ? 0.25 : 0.12));
+    if (night) set("screenGlow", mix(get("screenGlow"), WHITE, 0.4));
+  }
+  const palette = { key, dark: base.dark, colors };
+  variants.set(key, palette);
+  return palette;
+}
+
 export interface CharacterLook {
   readonly skin: number;
   readonly hair: number;
   readonly hairStyle: number;
   readonly shirt: number;
   readonly pants: number;
+  readonly outfit?: number;
+  readonly accessory?: AvatarConfig["accessory"];
+  readonly headgear?: AvatarConfig["headgear"];
 }
 
-export const HAIR_STYLE_COUNT = 3;
+export const HAIR_STYLE_COUNT = 5;
 
 function hash(text: string): number {
   let value = 0x811c9dc5;
@@ -330,5 +409,6 @@ export function lookFor(agentId: string): CharacterLook {
     hairStyle: (seed >>> 16) % HAIR_STYLE_COUNT,
     shirt: other % SHIRT_COUNT,
     pants: (other >>> 8) % PANTS_COUNT,
+    outfit: (other >>> 20) % 4,
   };
 }

@@ -66,7 +66,7 @@ const DARK: PluginTheme = {
 };
 
 const ROLES: CharacterRole[] = ["overseer", "nexus", "meow", "agent"];
-const POSES: CharacterPose[] = ["idle", "walk", "sit", "sleep", "drink", "talk", "stretch", "doze", "lie"];
+const POSES: CharacterPose[] = ["idle", "walk", "settle", "sit", "sleep", "drink", "talk", "stretch", "doze", "lie"];
 const FACINGS: Facing[] = ["down", "up", "left", "right"];
 const EMOTES: EmoteId[] = ["alert", "question", "fail", "check", "zzz", "thinking", "readyCup"];
 const READY_EMOTES: EmoteId[] = ["readyBob", "readySpark", "readyCup"];
@@ -292,8 +292,8 @@ describe("characters", () => {
 
   it("returns one object per drawing and wraps frames", () => {
     const spec = { role: "nexus", look: LOOK, pose: "walk", facing: "left" } as const;
-    expect(character({ ...spec, frame: 1 })).toBe(character({ ...spec, frame: 5 }));
-    expect(character({ ...spec, frame: -1 })).toBe(character({ ...spec, frame: 3 }));
+    expect(character({ ...spec, frame: 1 })).toBe(character({ ...spec, frame: 9 }));
+    expect(character({ ...spec, frame: -1 })).toBe(character({ ...spec, frame: 7 }));
     expect(character({ role: "agent", look: LOOK })).toBe(character({ role: "agent", look: { ...LOOK }, pose: "idle", facing: "down", frame: 0 }));
   });
 
@@ -689,7 +689,9 @@ describe("font and text", () => {
   it("folds Vietnamese and other accents to base letters", () => {
     expect(foldText("Đang kiểm tra hiện trạng")).toBe("Dang kiem tra hien trang");
     expect(foldText("ƯỚC ĐƯỜNG người Ừ")).toBe("UOC DUONG nguoi U");
-    expect(foldText("café naïve Ångström")).toBe("cafe naive Angstrom");
+    expect(foldText("café naïve Ångström")).toBe("café naive Angström");
+    expect(foldText("È già pronto, perche\u0301 sì")).toBe("È già pronto, perché sì");
+    expect(foldText("Bună dimineața, în oraş.")).toBe("Bună dimineața, în oraș.");
     // Decomposed input: letters followed by combining marks.
     expect(foldText("tie\u0302\u0301ng Vie\u0323\u0302t")).toBe("tieng Viet");
   });
@@ -1037,11 +1039,13 @@ describe("animation strips", () => {
     expect(stateIcon("working").strip.width).toBe(32);
     expect(emoteAnimation("readySpark")).toMatchObject({ frames: 8, frameWidth: 12 });
     const walk = characterAnimation({ role: "meow", look: LOOK, pose: "walk", facing: "left" });
-    expect([walk.frames, walk.strip.width, walk.strip.height]).toEqual([4, 64, 24]);
+    expect([walk.frames, walk.strip.width, walk.strip.height]).toEqual([8, 128, 24]);
     expect(walk.still).toBe(character({ role: "meow", look: LOOK, pose: "walk", facing: "left", frame: 0 }));
     const lying = characterAnimation({ role: "meow", look: LOOK, pose: "lie" });
     expect([lying.frameWidth, lying.frameHeight, lying.anchor]).toEqual([24, 16, { x: 12, y: 16 }]);
-    for (const one of [stateIcon("needs-input"), stateIcon("idle"), deskAnimation("lit"), emoteAnimation("readyBob"), walk]) {
+    expect(walk.frames * walk.frameMs).toBeGreaterThanOrEqual(400);
+    expect(walk.frames * walk.frameMs).toBeLessThanOrEqual(800);
+    for (const one of [stateIcon("needs-input"), stateIcon("idle"), deskAnimation("lit"), emoteAnimation("readyBob")]) {
       expect(one.frameMs).toBeGreaterThanOrEqual(100);
       expect(one.frames * one.frameMs).toBeLessThanOrEqual(4000);
     }

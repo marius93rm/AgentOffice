@@ -31,8 +31,8 @@ function agent(id: string, workspaceId: string): PaseoAgent {
   } as PaseoAgent;
 }
 
-/** Three workspaces: at 20 tiles two side by side and one under them, at 18 one beside a hallway. */
-function plan(width = 20): Office {
+/** Three furnished workspaces, two sharing a side wall at 23 tiles. */
+function plan(width = 23): Office {
   const agents = [
     ...["a1", "a2", "a3", "a4"].map((id) => agent(id, "ws-a")),
     ...["b1", "b2"].map((id) => agent(id, "ws-b")),
@@ -109,12 +109,12 @@ describe("frameArt", () => {
   });
 
   it("fills the hallway between rooms", () => {
-    // At 18 tiles the third room goes under the first two, leaving hallway right of the first.
-    const narrow = plan(18);
+    // At 22 tiles the narrower rooms leave an enclosed hallway between their walls.
+    const narrow = plan(22);
     const [first, , third] = narrow.rooms as unknown as [Rect, Rect, Rect];
     expect(third.x).toBeGreaterThan(first.x);
     const art = frameArt(narrow.rooms, narrow.building!.depth);
-    const x = (first.x + first.width + 1) * TILE + 3;
+    const x = (first.x + first.width - 1) * TILE + 13;
     const y = (first.y + 2) * TILE + 3;
     expect(art.pixels[y * art.width + x]).toBe(slotIndex("floorAlt"));
   });

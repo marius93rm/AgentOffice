@@ -47,13 +47,13 @@ function foldChar(char: string): string | null {
 }
 
 /**
- * Rewrites text into characters the font has. Accented Latin letters, Vietnamese included, become
- * their base letter; whitespace runs become one space; a run of anything else becomes one fallback
- * mark, so an emoji or a line of Chinese shows as a single block instead of a row of them.
+ * Rewrites text into characters the font has. Keep the Italian accents and fold the remaining
+ * supported accents to base letters. Runs of whitespace or unsupported characters collapse.
  */
 export function foldText(text: string): string {
   let out = "";
-  for (const char of text) {
+  const normalized = text.normalize("NFC").replace(/[şŞţŢ]/g, (char) => ({ ş: "ș", Ş: "Ș", ţ: "ț", Ţ: "Ț" })[char]!);
+  for (const char of normalized) {
     if (isCombiningMark(char)) continue;
     if (isSpace(char)) {
       if (out !== "" && !out.endsWith(" ")) out += " ";

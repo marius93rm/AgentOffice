@@ -83,13 +83,16 @@ export function glidePieces(
 export interface Cycle {
   frames: readonly number[];
   beatMs: number;
+  /** Walking can keep its frame through a change of pace at a corner. */
+  startAt?: number;
 }
 
 /** The frame a cycle shows at `now`. Every cycle runs on the one clock, so equal cycles are in step. */
 export function frameAt(cycle: Cycle, now: number): number {
   const length = cycle.frames.length;
   if (length === 0) return 0;
-  return cycle.frames[Math.floor(now / cycle.beatMs) % length] ?? 0;
+  const beat = Math.max(0, Math.floor((now - (cycle.startAt ?? 0)) / cycle.beatMs));
+  return cycle.frames[beat % length] ?? 0;
 }
 
 /** A plain loop: each of `count` frames for one beat, in order. */
@@ -104,10 +107,11 @@ export function loopOf(count: number, beatMs: number): Cycle {
 export function nextChange(cycle: Cycle, now: number): number | null {
   const length = cycle.frames.length;
   if (length < 2) return null;
-  const beat = Math.floor(now / cycle.beatMs);
+  const start = cycle.startAt ?? 0;
+  const beat = Math.max(0, Math.floor((now - start) / cycle.beatMs));
   const showing = cycle.frames[beat % length];
   for (let ahead = 1; ahead <= length; ahead += 1) {
-    if (cycle.frames[(beat + ahead) % length] !== showing) return (beat + ahead) * cycle.beatMs;
+    if (cycle.frames[(beat + ahead) % length] !== showing) return start + (beat + ahead) * cycle.beatMs;
   }
   return null;
 }

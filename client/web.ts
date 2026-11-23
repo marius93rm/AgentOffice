@@ -7,6 +7,37 @@ import { Platform } from "react-native";
  */
 export const ON_WEB = Platform.OS === "web";
 
+export interface AgentKeyEvent {
+  key: string;
+  preventDefault(): void;
+  stopPropagation(): void;
+  altKey?: boolean;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+  target?: unknown;
+  currentTarget?: unknown;
+}
+
+/** React Native Web gives Pressable a real key handler. Native retains standard accessibility activation. */
+export function agentArrowKeys(move: (direction: -1 | 1) => void, horizontal = false): object {
+  if (!ON_WEB) return {};
+  return {
+    onKeyDown: (event: AgentKeyEvent) => {
+      if (event.altKey || event.ctrlKey || event.metaKey || event.target !== event.currentTarget) return;
+      const direction = event.key === "ArrowUp" || (horizontal && event.key === "ArrowLeft") ? -1
+        : event.key === "ArrowDown" || (horizontal && event.key === "ArrowRight") ? 1 : 0;
+      if (!direction) return;
+      event.preventDefault();
+      event.stopPropagation();
+      move(direction);
+    },
+  };
+}
+
+export function focusAgent(ref: unknown): void {
+  if (ref && typeof ref === "object" && "focus" in ref && typeof ref.focus === "function") ref.focus();
+}
+
 /** What `slideTo` needs of the node behind a View's ref on the web. */
 interface Slidable {
   style: { transform: string };
@@ -88,4 +119,57 @@ export function anchorScroll(scroller: unknown, anchored: boolean): void {
   const node = (scroller as Scrollable).getScrollableNode();
   if (node === null || typeof node !== "object" || !("style" in node)) return;
   (node as { style: { overflowAnchor: string } }).style.overflowAnchor = anchored ? "" : "none";
+}
+
+interface DownloadLink {
+  href: string;
+  download: string;
+  click(): void;
+  remove(): void;
+}
+interface CanvasContext {
+  createImageData(width: number, height: number): { data: Uint8ClampedArray };
+  putImageData(data: { data: Uint8ClampedArray }, x: number, y: number): void;
+}
+interface SnapshotCanvas {
+  width: number;
+  height: number;
+  getContext(kind: "2d"): CanvasContext | null;
+  toDataURL(type: "image/png"): string;
+}
+interface CaptureDocument {
+  createElement(name: "canvas"): SnapshotCanvas;
+  createElement(name: "a"): DownloadLink;
+  body: { appendChild(link: DownloadLink): void };
+}
+function captureDocument(): CaptureDocument | undefined {
+  return ON_WEB ? (globalThis as { document?: CaptureDocument }).document : undefined;
+}
+
+export function canExportOffice(): boolean {
+  return Boolean(captureDocument()?.createElement("canvas").getContext("2d"));
+}
+
+export function downloadOffice(image: { width: number; height: number; pixels: Uint8ClampedArray }): boolean {
+  const doc = captureDocument();
+  if (!doc) return false;
+  const canvas = doc.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return false;
+  const data = ctx.createImageData(image.width, image.height);
+  data.data.set(image.pixels);
+  ctx.putImageData(data, 0, 0);
+  const link = doc.createElement("a");
+  link.href = canvas.toDataURL("image/png");
+  if (!link.href.startsWith("data:image/png;")) return false;
+  link.download = "agent-lobby.png";
+  doc.body.appendChild(link);
+  try {
+    link.click();
+  } finally {
+    link.remove();
+  }
+  return true;
 }

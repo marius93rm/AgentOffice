@@ -1,6 +1,8 @@
 import type { PaseoAgent } from "./paseo-types";
-import { PROPS, PROP_USES } from "./pixel/props";
+import { PROPS, PROP_USES, TILE, type FloorId } from "./pixel/props";
+import { WALL_DECOR_IDS, type WallDecorId } from "./pixel/wall-decor";
 import { STATE_ORDER, activityAt, parentAgentId, roleOf, type CrewGroup, type CrewNode, type CrewState } from "./model";
+import { DEFAULT_ROOM, ROOM_COLORS, type RoomSetting } from "../shared/preferences";
 
 /**
  * The office, in tiles. A room per workspace, a pod per crew tree, a desk per
@@ -89,7 +91,8 @@ export interface Pod extends Rect {
 }
 
 /** The props a zone can hold; ids, footprints and use points are the sprite catalogue's table. */
-export type ZonePropId = "fridge" | "counter" | "coffee" | "water" | "table" | "bookshelf" | "plant" | "sofa" | "beanbag" | "rug";
+export type ZonePropId = "fridge" | "counter" | "coffee" | "water" | "table" | "workbench" | "readingLamp" | "bookshelf" | "plant" | "sofa" | "beanbag" | "rug" | "window";
+type RoomTheme = Exclude<RoomSetting["theme"], "auto">;
 
 export interface ZoneProp {
   id: ZonePropId;
@@ -121,6 +124,20 @@ export interface Zone extends Rect {
   spots: UseSpot[];
 }
 
+export interface WallDecoration extends Point {
+  id: WallDecorId;
+}
+
+/** A workspace-seeded look: stable floor material, palette tint, furniture order and wall art. */
+export interface RoomLook {
+  palette: number;
+  floor: FloorId;
+  wall?: Exclude<RoomSetting["wall"], "auto">;
+  /** Art-pixel centers relative to the room's top-left. */
+  wallDecor: WallDecoration[];
+  theme?: RoomTheme;
+}
+
 /** The strip under the desks. */
 export interface Lounge extends Rect {
   /** The bottom row: always clear, where people pass, visitors stand and the overflow waits. */
@@ -149,6 +166,8 @@ export interface Room extends Rect {
   lounge: Lounge;
   /** The pantry and the lounge, each with its props and use points. Empty in a room nobody is in. */
   zones: Zone[];
+  look: RoomLook;
+  breakPace?: RoomSetting["breaks"];
   /** The zones stand beside the desks, against the top wall, instead of under them. */
   zonesBeside: boolean;
   /**
@@ -207,6 +226,7 @@ export interface OfficeOptions {
    * visitor.
    */
   agents?: ReadonlyMap<string, PaseoAgent>;
+  preferences?: Readonly<Record<string, RoomSetting>>;
 }
 
 const bySeniority = (a: PaseoAgent, b: PaseoAgent): number =>
@@ -364,31 +384,46 @@ function pack(room: number, priority: readonly ZonePropId[], order: readonly Zon
 
 const span = (ids: readonly ZonePropId[]) => ids.reduce((sum, id) => sum + tilesWide(id), 0);
 
+function rotated<T>(values: readonly T[], amount: number): T[] {
+  const start = ((amount % values.length) + values.length) % values.length;
+  return [...values.slice(start), ...values.slice(0, start)];
+}
+
 /**
  * What a room `contentWidth` tiles wide between corridor and right wall is
  * furnished with. Everything stands against the half wall: the pantry's
  * appliances on the left, then the lounge's shelves, plant, sofa and beanbag,
  * a tile apart, and each zone is exactly as wide as what it holds. As the room
- * narrows the pantry gives up its water cooler, then the counter, then the
- * fridge, and keeps the coffee machine; the lounge gives up the beanbag, then
- * the bookshelf, then the plant, and keeps the sofa.
+ * narrows each zone keeps the props that fit best for that room's variation.
  */
-export function fitZones(contentWidth: number): ZoneFit {
+const LOUNGE_FURNITURE: Record<RoomTheme, readonly ZonePropId[]> = {
+  studio: ["plant", "sofa", "beanbag", "bookshelf"],
+  library: ["bookshelf", "readingLamp", "window", "beanbag", "sofa", "plant"],
+  workshop: ["plant", "beanbag", "bookshelf", "sofa"],
+};
+
+export function fitZones(contentWidth: number, variation = 0, theme?: RoomTheme): ZoneFit {
   if (contentWidth < 1) return { pantry: null, lounge: null, table: false };
   const pantryRoom = Math.max(1, Math.min(PANTRY_MAX_WIDTH, Math.floor(contentWidth * 0.45)));
-  const pantryWall = pack(pantryRoom, ["coffee", "fridge", "counter", "water"], ["fridge", "counter", "coffee", "water"]);
+  const pantryPriority = theme === "workshop"
+    ? ["coffee", "counter", "water", "fridge"] as const
+    : rotated(["coffee", "fridge", "counter", "water"] as const, variation % 4);
+  const pantryOrder = theme === "workshop" ? pantryPriority : rotated(["fridge", "counter", "coffee", "water"] as const, variation >>> 2);
+  const pantryWall = pack(pantryRoom, pantryPriority, pantryOrder);
   const pantry = { width: span(pantryWall), wall: pantryWall };
   const loungeRoom = Math.min(LOUNGE_MAX_WIDTH, contentWidth - pantry.width - 1);
   if (loungeRoom < 2) return { pantry, lounge: null, table: false };
-  const loungeWall = pack(loungeRoom, ["sofa", "plant", "bookshelf", "beanbag"], ["bookshelf", "plant", "sofa", "beanbag"]);
+  const loungePriority = theme ? LOUNGE_FURNITURE[theme] : rotated(["sofa", "plant", "bookshelf", "beanbag"] as const, variation >>> 4);
+  const loungeOrder = theme ? LOUNGE_FURNITURE[theme] : rotated(["bookshelf", "plant", "sofa", "beanbag"] as const, variation >>> 6);
+  const loungeWall = pack(loungeRoom, loungePriority, loungeOrder);
   const lounge = { width: span(loungeWall), wall: loungeWall };
   // The table stands in the tile between the zones; whoever uses it stands in the last tile of
   // the pantry and the first of the lounge, which must not be the rug in front of the sofa.
-  return { pantry, lounge, table: loungeWall[0] !== "sofa" };
+  return { pantry, lounge, table: theme !== "library" && loungeWall[0] !== "sofa" };
 }
 
-function furnish(left: number, top: number, contentWidth: number): Zone[] {
-  const fit = fitZones(contentWidth);
+function furnish(left: number, top: number, contentWidth: number, variation: number, theme: RoomTheme, objects: RoomSetting["objects"]): Zone[] {
+  const fit = fitZones(contentWidth, variation, theme);
   const wallY = top;
   const frontY = top + 1;
   const walkY = top + ZONE_ROWS - 1;
@@ -432,16 +467,32 @@ function furnish(left: number, top: number, contentWidth: number): Zone[] {
   if (!fit.pantry) return zones;
   const pantryProps = row(fit.pantry.wall, left);
   const loungeLeft = left + fit.pantry.width + 1;
-  const loungeProps = fit.lounge ? row(fit.lounge.wall, loungeLeft) : [];
+  const choices = (["window", "readingLamp", "bookshelf", "plant", "sofa", "beanbag"] as const).map((id) => ({
+    id, enabled: objects[id === "readingLamp" ? "lamp" : id],
+  }));
+  const requested = choices.filter((entry) => entry.enabled === true).map((entry) => entry.id);
+  const excluded = new Set<ZonePropId>(choices.filter((entry) => entry.enabled === false).map((entry) => entry.id));
+  const fallback = (fit.lounge?.wall ?? []).filter((id) => !excluded.has(id));
+  const priority = [...new Set<ZonePropId>([...requested, ...fallback])];
+  const custom = requested.length > 0 || excluded.size > 0;
+  const available = Math.min(LOUNGE_MAX_WIDTH, contentWidth - (loungeLeft - left));
+  // Keep the same room and desk footprint. Requested items only use space already reserved by the layout.
+  const loungeWidth = fit.lounge?.width ?? 0;
+  const styled = custom ? pack(Math.min(loungeWidth, available), priority, priority) : fallback;
+  const loungeProps = row(styled, loungeLeft);
   const sofa = loungeProps.find((item) => item.id === "sofa");
-  if (sofa) {
+  if (sofa && objects.rug !== false) {
     // The rug lies in front of the sofa; nobody stands on it.
     loungeProps.push({ id: "rug", x: sofa.x, y: frontY });
     taken.add(`${sofa.x},${frontY}`);
     taken.add(`${sofa.x + 1},${frontY}`);
+  } else if (!sofa && objects.rug === true && loungeWidth >= 2) {
+    loungeProps.unshift({ id: "rug", x: loungeLeft, y: frontY });
   }
   // The table's two places come first, so they win over the spots in front of the wall.
-  const table: ZoneProp | null = fit.table ? { id: "table", x: loungeLeft - 1, y: frontY } : null;
+  const tableFits = fit.lounge && styled[0] !== "sofa";
+  const table: ZoneProp | null = tableFits && (objects.table ?? fit.table)
+    ? { id: theme === "workshop" ? "workbench" : "table", x: loungeLeft - 1, y: frontY } : null;
   const tableSpots = table ? spotsOf([table], "pantry") : [];
   if (table) taken.add(`${table.x},${table.y}`);
   zones.push({
@@ -462,7 +513,7 @@ function furnish(left: number, top: number, contentWidth: number): Zone[] {
       height: ZONE_ROWS,
       props: loungeProps,
       spots: [
-        ...tableSpots.filter((spot) => spot.x >= loungeLeft).map((spot) => ({ ...spot, zone: "lounge" as const })),
+        ...tableSpots.filter((spot) => spot.x >= loungeLeft),
         ...spotsOf(loungeProps, "lounge"),
       ],
     });
@@ -529,15 +580,18 @@ function shapeRoom(
   maxInner: number,
   /** Tiles the closed agents' cabinet takes at the end of the zones' wall. */
   cabinet: number,
+  variation: number,
+  theme: RoomTheme,
 ): Shape {
   if (seated === 0) {
     return { block: { pods: [], width: 0, height: 0 }, beside: false, zoneRoom: 0, innerWidth: MIN_INNER_WIDTH, innerHeight: BARE_ROWS };
   }
-  const budget = zoneBudget(seated);
+  const budget = zoneBudget(seated) + (theme === "studio" ? 1 : 0);
   const mostColumns = Math.max(1, Math.min(MAX_POD_COLUMNS, Math.floor(maxInner / DESK_WIDTH)));
   let best: (Shape & { area: number }) | null = null;
   const consider = (shape: Shape) => {
-    const area = (shape.innerWidth + 3) * (shape.innerHeight + 3);
+    const preferred = theme === "workshop" ? shape.beside : theme === "library" && !shape.beside;
+    const area = (shape.innerWidth + 3) * (shape.innerHeight + 3) * (preferred ? 0.84 : 1);
     if (
       !best ||
       area < best.area ||
@@ -554,17 +608,17 @@ function shapeRoom(
       block,
       beside: false,
       zoneRoom: under,
-      innerWidth: Math.max(block.width, zonesWidth(fitZones(under)) + cabinet, MIN_INNER_WIDTH),
+      innerWidth: Math.max(block.width, zonesWidth(fitZones(under, variation, theme)) + cabinet, MIN_INNER_WIDTH),
       innerHeight: block.height + ZONE_ROWS,
     });
     const aside = Math.min(budget, maxInner - block.width - 1 - cabinet);
-    // Beside the desks only if at least a coffee machine and a sofa fit there.
-    if (aside >= 4 && fitZones(aside).lounge) {
+    // Beside the desks only if the chosen furnishings leave a usable lounge.
+    if (aside >= 4 && fitZones(aside, variation, theme).lounge) {
       consider({
         block,
         beside: true,
         zoneRoom: aside,
-        innerWidth: block.width + 1 + zonesWidth(fitZones(aside)) + cabinet,
+        innerWidth: block.width + 1 + zonesWidth(fitZones(aside, variation, theme)) + cabinet,
         innerHeight: Math.max(block.height, ZONE_ROWS),
       });
     }
@@ -572,7 +626,97 @@ function shapeRoom(
   return best as unknown as Shape;
 }
 
-function layoutRoom(group: CrewGroup, origin: Point, maxWidth: number, holding: ReadonlySet<string>): Room {
+const ROOM_FLOORS: readonly FloorId[] = ["floor", "floorAlt", "floorBoards", "floorMosaic"];
+const ROOM_PALETTE_COUNT = 7;
+
+interface RoomStyle {
+  palette: number;
+  floor: FloorId;
+  primaryDecor: WallDecorId;
+  theme: RoomTheme;
+  settings: RoomSetting;
+}
+
+const AUTO_THEMES = ["studio", "library", "workshop"] as const;
+const THEME_DECOR = {
+  studio: ["abstract", "sunset", "flower"],
+  library: ["books", "botanical", "moon"],
+  workshop: ["clock", "waves", "abstract"],
+} as const satisfies Record<RoomTheme, readonly WallDecorId[]>;
+
+export function resolvedRoomTheme(workspaceId: string, setting: RoomSetting): RoomTheme {
+  return setting.theme === "auto" ? AUTO_THEMES[hash(`${workspaceId}/layout/${setting.seed}`) % AUTO_THEMES.length]! : setting.theme;
+}
+
+function roomStyle(workspaceId: string, settings: RoomSetting): RoomStyle {
+  // Scope, search filters and other rooms cannot change the style a workspace gets.
+  const key = `${workspaceId}/${settings.seed}`;
+  const theme = resolvedRoomTheme(workspaceId, settings);
+  const art = THEME_DECOR[theme];
+  const floor: FloorId = theme === "library" ? "floorBoards"
+    : theme === "workshop" ? "floorMosaic" : ROOM_FLOORS[hash(`${key}/floor`) % ROOM_FLOORS.length]!;
+  return {
+    theme, settings, floor: settings.floor === "auto" ? floor : ({ stone: "floor", tile: "floorAlt", planks: "floorBoards", mosaic: "floorMosaic" } as const)[settings.floor],
+    palette: settings.palette === "auto" ? hash(`${key}/${theme}/palette`) % ROOM_PALETTE_COUNT : ROOM_COLORS.indexOf(settings.palette) - 1,
+    primaryDecor: art[hash(`${key}/art`) % art.length]!,
+  };
+}
+
+function roomLook(
+  workspaceId: string,
+  origin: Point,
+  roomWidth: number,
+  floorTop: number,
+  desks: readonly Desk[],
+  style: RoomStyle,
+): RoomLook {
+  const rightEdge = origin.x + roomWidth - 1;
+  const topRow = desks.filter((desk) => desk.cell.y === floorTop);
+  const points = new Set<number>();
+  for (const desk of topRow) {
+    const at = desk.cell.x + DESK_WIDTH;
+    if (at > origin.x + 1 && at < rightEdge) points.add(at - origin.x);
+  }
+  // An empty or one-desk room still gets a hanging detail on its open wall.
+  if (points.size === 0) {
+    for (let x = 2.5; x < roomWidth - 1; x += 2) points.add(x);
+  }
+  const key = `${workspaceId}/${style.settings.seed}`;
+  const count = style.settings.decor === "minimal" ? 0 : style.settings.decor === "full" ? 4 : 1 + hash(`${key}/decor-count`) % 2;
+  const chosen = [...points]
+    .sort((a, b) => hash(`${key}/decor-slot/${a}`) - hash(`${key}/decor-slot/${b}`))
+    .slice(0, count);
+  const usedArt = new Set<WallDecorId>();
+  const wallDecor = chosen.map((x) => {
+    const pick = hash(`${key}/decor-art/${x}`);
+    const candidates = rotated(WALL_DECOR_IDS, pick % WALL_DECOR_IDS.length);
+    const id = usedArt.size === 0
+      ? style.primaryDecor
+      : candidates.find((candidate) => !usedArt.has(candidate)) ?? candidates[0] as WallDecorId;
+    usedArt.add(id);
+    return {
+      id,
+      x: x * TILE,
+      y: (floorTop - origin.y - 0.5) * TILE,
+    };
+  });
+  return {
+    palette: style.palette,
+    floor: style.floor,
+    wall: style.settings.wall === "auto" ? undefined : style.settings.wall,
+    wallDecor,
+    theme: style.theme,
+  };
+}
+
+function layoutRoom(
+  group: CrewGroup,
+  origin: Point,
+  maxWidth: number,
+  holding: ReadonlySet<string>,
+  style: RoomStyle,
+): Room {
+  const variation = hash(`${group.workspaceId}/furniture/${style.settings.seed}`);
   const seated = (node: CrewNode) => node.state !== "closed" || holding.has(node.agent.id);
   const away: string[] = [];
   const crews = [...group.roots]
@@ -581,7 +725,7 @@ function layoutRoom(group: CrewGroup, origin: Point, maxWidth: number, holding: 
     .filter((crew) => crew.teams.length > 0);
   const agentCount = crews.reduce((sum, crew) => sum + crew.teams.reduce((inCrew, team) => inCrew + team.members.length, 0), 0);
   const cabinet = away.length > 0 ? 1 : 0;
-  const shape = shapeRoom(crews, agentCount, Math.max(DESK_WIDTH, maxWidth - 2 * WALL - CORRIDOR), cabinet);
+  const shape = shapeRoom(crews, agentCount, Math.max(DESK_WIDTH, maxWidth - 2 * WALL - CORRIDOR), cabinet, variation, style.theme);
   const width = shape.innerWidth + 2 * WALL + CORRIDOR;
   const left = origin.x + WALL + CORRIDOR;
   const top = origin.y + WALL + FACE_ROWS;
@@ -590,7 +734,7 @@ function layoutRoom(group: CrewGroup, origin: Point, maxWidth: number, holding: 
   // under them they follow the last aisle row.
   const stripLeft = shape.beside ? left + shape.block.width + 1 : left;
   const stripTop = shape.beside ? top : top + shape.block.height;
-  const zones = agentCount > 0 ? furnish(stripLeft, stripTop, shape.zoneRoom) : [];
+  const zones = agentCount > 0 ? furnish(stripLeft, stripTop, shape.zoneRoom, variation, style.theme, style.settings.objects) : [];
   const rows = agentCount > 0 ? ZONE_ROWS : BARE_ROWS;
   const lastZone = zones.at(-1);
   const lounge: Lounge = {
@@ -632,6 +776,8 @@ function layoutRoom(group: CrewGroup, origin: Point, maxWidth: number, holding: 
     pods,
     lounge,
     zones,
+    look: roomLook(group.workspaceId, origin, width, top, pods.flatMap((pod) => pod.teams.flatMap((team) => team.desks)), style),
+    breakPace: style.settings.breaks,
     zonesBeside: shape.beside,
     closed: closedIds.length > 0 ? { ids: closedIds, at: cabinetAt } : null,
     agentCount,
@@ -676,7 +822,6 @@ export function layoutOffice(groups: readonly CrewGroup[], options: OfficeOption
     if (left && right) return bySeniority(left, right) || a.workspaceId.localeCompare(b.workspaceId);
     return a.workspaceId.localeCompare(b.workspaceId);
   });
-
   const rooms: Room[] = [];
   const desks = new Map<string, Desk>();
   const roomOf = new Map<string, string>();
@@ -687,7 +832,8 @@ export function layoutOffice(groups: readonly CrewGroup[], options: OfficeOption
   // in column x so far.
   const skyline = Array.from({ length: width }, () => 0);
   for (const group of ordered) {
-    const size = layoutRoom(group, { x: 0, y: 0 }, width, holding);
+    const style = roomStyle(group.workspaceId, options.preferences?.[group.workspaceId] ?? DEFAULT_ROOM);
+    const size = layoutRoom(group, { x: 0, y: 0 }, width, holding, style);
     // The highest place it fits; among those, the one that leaves least hallway under it; then the leftmost.
     let at = { x: 0, y: Infinity, gap: Infinity };
     for (let x = 0; x + size.width <= width; x += 1) {
@@ -698,7 +844,7 @@ export function layoutOffice(groups: readonly CrewGroup[], options: OfficeOption
       if (y < at.y || (y === at.y && gap < at.gap)) at = { x, y, gap };
     }
     if (!Number.isFinite(at.y)) at = { x: 0, y: Math.max(...skyline), gap: 0 };
-    const room = layoutRoom(group, at, width, holding);
+    const room = layoutRoom(group, at, width, holding, style);
     // The right wall stays open to a neighbour: only the columns left of it are spoken for.
     for (let column = room.x; column < room.x + room.width - WALL && column < width; column += 1) {
       skyline[column] = room.y + room.height - WALL;
@@ -778,7 +924,7 @@ export type Activity =
 export type Emote = "question" | "alert" | "check" | "zzz";
 
 /** Something a character does at a place: sipping, chatting with whoever is opposite, stretching, nodding off, reading. */
-export type Act = "drink" | "talk" | "stretch" | "doze" | "read";
+export type Act = "drink" | "talk" | "stretch" | "doze" | "read" | "look";
 
 export interface Presence {
   agentId: string;
@@ -816,9 +962,9 @@ export interface Presence {
  */
 export const WANDER_MS = 15 * 60_000;
 /** How long somebody on a break stays at one spot before choosing another: between this ... */
-export const BREAK_DWELL_MIN_MS = 3 * 60_000;
+export const BREAK_DWELL_MIN_MS = 60_000;
 /** ... and this much longer, a length that is each agent's own. */
-export const BREAK_DWELL_SPREAD_MS = 3 * 60_000;
+export const BREAK_DWELL_SPREAD_MS = 60_000;
 
 function hash(value: string): number {
   let result = 2166136261;
@@ -838,12 +984,16 @@ function hash(value: string): number {
  * at once nor ever stand still for a whole break; within a stretch the answer
  * does not change.
  */
-export function breakStretch(agentId: string, now: number): { index: number; startedAt: number; endsAt: number } {
-  const dwell = BREAK_DWELL_MIN_MS + (hash(`${agentId}/dwell`) % BREAK_DWELL_SPREAD_MS);
+const BREAK_INTERVAL = { quiet: 2, normal: 1, lively: 0.6 } as const;
+
+export function breakStretch(agentId: string, now: number, pace: RoomSetting["breaks"] = "normal"): { index: number; startedAt: number; endsAt: number } {
+  const dwell = Math.round((BREAK_DWELL_MIN_MS + (hash(`${agentId}/dwell`) % BREAK_DWELL_SPREAD_MS)) * BREAK_INTERVAL[pace]);
   const phase = hash(`${agentId}/phase`) % dwell;
   const index = Math.floor((now + phase) / dwell);
   return { index, startedAt: index * dwell - phase, endsAt: (index + 1) * dwell - phase };
 }
+
+const isGatheringTable = (prop: ZonePropId | null) => prop === "table" || prop === "workbench";
 
 export interface Idler {
   agentId: string;
@@ -864,6 +1014,7 @@ export interface Idler {
  * that is full too they are left out: they stay at their desks.
  */
 export function assignBreaks(room: Room, idlers: readonly Idler[], reserved: readonly Point[], now: number): Map<string, UseSpot> {
+  if (idlers.length === 0) return new Map();
   const spots = room.zones.flatMap((zone) => zone.spots);
   const walkway: UseSpot[] = [];
   // The corridor's foot is kept clear: everybody comes in through it.
@@ -882,17 +1033,17 @@ export function assignBreaks(room: Room, idlers: readonly Idler[], reserved: rea
   }
   const key = (spot: Point) => `${spot.x},${spot.y}`;
   // The table stands between the two zones; both its places belong with the pantry.
-  const pantry = spots.filter((spot) => spot.zone === "pantry" || spot.prop === "table");
+  const pantry = spots.filter((spot) => spot.zone === "pantry" || isGatheringTable(spot.prop));
   const lounge = spots.filter((spot) => !pantry.includes(spot));
   // Where people gather: the standing table, or failing that the middle of the pantry.
-  const table = room.zones.flatMap((zone) => zone.props).find((item) => item.id === "table");
+  const table = room.zones.flatMap((zone) => zone.props).find((item) => isGatheringTable(item.id));
   const hub = table ? table.x : pantry.reduce((sum, spot) => sum + spot.x, 0) / Math.max(1, pantry.length);
   const blocked = new Set(reserved.map(key));
   const people = [...idlers].sort((a, b) => a.agentId.localeCompare(b.agentId));
 
   /** When the stretch an agent was in at `time` began for it: not before it went idle. */
   const begun = (idler: Idler, time: number) => {
-    const stretch = breakStretch(idler.agentId, time);
+    const stretch = breakStretch(idler.agentId, time, room.breakPace);
     return { index: stretch.index, at: Math.max(stretch.startedAt, idler.since) };
   };
   const known = new Map<string, UseSpot | null>();
@@ -950,6 +1101,7 @@ export function presenceOf(
   breakSpot: UseSpot | null,
   now: number,
   company = false,
+  pace: RoomSetting["breaks"] = "normal",
 ): Presence {
   const base = {
     agentId: agent.id,
@@ -976,7 +1128,7 @@ export function presenceOf(
         return { ...base, activity: "done", at: desk.stand, facing: "down", seated: false, screenOn: true, emote: "check" };
       }
       // It keeps its check wherever it goes, and its screen stays lit: there is something to read.
-      const atTable = away.prop === "table";
+      const atTable = isGatheringTable(away.prop);
       const sitting = away.pose === "sit";
       return {
         ...base,
@@ -1000,15 +1152,15 @@ export function presenceOf(
       if (!away) {
         return { ...base, activity: "asleep", at: desk.seat, facing: "up", seated: true, screenOn: false, emote: "zzz" };
       }
-      const whim = hash(`${agent.id}/${breakStretch(agent.id, now).index}/whim`) % 3;
+      const whim = hash(`${agent.id}/${breakStretch(agent.id, now, pace).index}/whim`) % 3;
       const sitting = away.pose === "sit";
-      const act: Act | null = sitting
+      const act: Act | null = away.prop === "bookshelf" ? "read" : away.prop === "window" ? "look" : away.prop === "coffee" || away.prop === "water" ? "drink" : sitting
         ? away.prop === "beanbag" || whim === 1
           ? "doze"
           : whim === 2
             ? "read"
             : null
-        : away.prop === "table"
+        : isGatheringTable(away.prop)
           ? company
             ? "talk"
             : "drink"
@@ -1021,7 +1173,7 @@ export function presenceOf(
         placeId: away.id,
         at: { x: away.x, y: away.y },
         aisleY: away.aisleY,
-        facing: away.facing,
+        facing: act === "drink" && !isGatheringTable(away.prop) ? "down" : away.facing,
         seated: false,
         lounging: sitting,
         lift: away.lift,
@@ -1045,6 +1197,7 @@ export function presences(
   agents: ReadonlyMap<string, PaseoAgent>,
   stateOf: (agent: PaseoAgent) => CrewState,
   now: number,
+  ambient = true,
 ): Map<string, Presence> {
   const states = new Map<string, CrewState>();
   const idlers = new Map<string, Idler[]>();
@@ -1053,7 +1206,7 @@ export function presences(
     if (!agent) continue;
     const state = stateOf(agent);
     states.set(agentId, state);
-    if ((state !== "idle" && state !== "ready") || !onBreak(agent, now)) continue;
+    if (!ambient || (state !== "idle" && state !== "ready") || !onBreak(agent, now)) continue;
     const roomId = office.roomOf.get(agentId) ?? "";
     idlers.set(roomId, [
       ...(idlers.get(roomId) ?? []),
@@ -1067,6 +1220,7 @@ export function presences(
     for (const [agentId, spot] of assigned) breaks.set(agentId, spot);
   }
   const occupied = new Set([...breaks.values()].map((spot) => `${spot.x},${spot.y}`));
+  const rooms = new Map(office.rooms.map((room) => [room.workspaceId, room]));
   const out = new Map<string, Presence>();
   for (const [agentId, desk] of office.desks) {
     const agent = agents.get(agentId);
@@ -1075,8 +1229,8 @@ export function presences(
     const spot = breaks.get(agentId) ?? null;
     // The table's two places are a tile either side of it: somebody opposite is two tiles along.
     const company =
-      spot?.prop === "table" && occupied.has(`${spot.x + (spot.facing === "right" ? 2 : -2)},${spot.y}`);
-    out.set(agentId, presenceOf(agent, state, desk, spot, now, company));
+      Boolean(spot && isGatheringTable(spot.prop) && occupied.has(`${spot.x + (spot.facing === "right" ? 2 : -2)},${spot.y}`));
+    out.set(agentId, presenceOf(agent, state, desk, spot, now, company, rooms.get(office.roomOf.get(agentId) ?? "")?.breakPace));
   }
   for (const [agentId, visitor] of office.visitors) {
     const agent = agents.get(agentId);
@@ -1117,12 +1271,14 @@ export function nextPresenceChange(
   now: number,
 ): number | null {
   let next: number | null = null;
+  const rooms = new Map(office.rooms.map((room) => [room.workspaceId, room]));
   for (const agentId of office.desks.keys()) {
     const agent = agents.get(agentId);
     if (!agent) continue;
     const state = stateOf(agent);
     if ((state !== "idle" && state !== "ready") || !onBreak(agent, now)) continue;
-    const at = Math.min(Date.parse(activityAt(agent)) + WANDER_MS, breakStretch(agentId, now).endsAt);
+    const pace = rooms.get(office.roomOf.get(agentId) ?? "")?.breakPace;
+    const at = Math.min(Date.parse(activityAt(agent)) + WANDER_MS, breakStretch(agentId, now, pace).endsAt);
     if (at > now && (next === null || at < next)) next = at;
   }
   return next;
@@ -1197,4 +1353,39 @@ export function sharePresences(
   after: ReadonlyMap<string, Presence>,
 ): ReadonlyMap<string, Presence> {
   return before ? shareEntries(before, after) : after;
+}
+
+/** Work and conversation updates can change counters without moving a room. */
+export function createOfficeLayoutCache() {
+  let facts = "";
+  let last: Office | null = null;
+  return (groups: readonly CrewGroup[], options: OfficeOptions): Office => {
+    const rooms = [...groups].sort((a, b) => a.workspaceId.localeCompare(b.workspaceId)).map((group) => {
+      const members: unknown[][] = [];
+      const collect = ({ agent, state, children }: CrewNode) => {
+        const parentId = parentAgentId(agent);
+        const parent = parentId ? options.agents?.get(parentId) : undefined;
+        members.push([agent.id, agent.workspaceId, agent.createdAt, parentId, roleOf(agent), state === "closed",
+          parent?.createdAt, parent?.archivedAt]);
+        children.forEach(collect);
+      };
+      group.roots.forEach(collect);
+      members.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+      return [group.workspaceId, group.name, members, options.preferences?.[group.workspaceId] ?? DEFAULT_ROOM];
+    });
+    const signature = JSON.stringify([options.width, [...options.holding ?? []].sort(), rooms]);
+    if (!last || signature !== facts) {
+      facts = signature;
+      last = shareOffice(last, layoutOffice(groups, options));
+      return last;
+    }
+    const counts = new Map(groups.map((group) => [group.workspaceId, group.counts]));
+    const updated = last.rooms.map((room) => {
+      const count = counts.get(room.workspaceId)!;
+      return STATE_ORDER.every((state) => count[state] === room.counts[state]) ? room
+        : { ...room, counts: count, urgency: (count["needs-input"] ? 0 : count.failed ? 1 : 2) as Room["urgency"] };
+    });
+    if (updated.some((room, index) => room !== last!.rooms[index])) last = { ...last, rooms: updated };
+    return last;
+  };
 }

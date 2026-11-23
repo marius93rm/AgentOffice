@@ -4,6 +4,8 @@
   "description": "A plugin that shows your agents as a small pixel-art office.",
   "icon": "docs/icon.png",
   "media": [
+    "docs/lobby-v2-day.png",
+    "docs/lobby-v2-night.png",
     "docs/lobby-surface-light.png",
     "docs/lobby-pane-light.png",
     "docs/lobby-closeup-light.png",
@@ -12,6 +14,6 @@
     "docs/lobby-pane-dark.png"
   ],
   "requirements": {
-    "paseo": ">=0.11.2"
+    "paseo": ">=0.16.1"
   }
 }

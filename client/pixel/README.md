@@ -11,7 +11,7 @@ is covered by this repository's licence.
 
 ## How a sprite reaches the screen
 
-1. A drawing function (`character`, `prop`, `tile`, `emote`, `composite`) returns a `Bitmap`: palette
+1. A drawing function (`character`, `prop`, `tile`, `emote`, `wallDecoration`, `composite`) returns a `Bitmap`: palette
    slot indices, a size and an anchor. Bitmaps do not depend on the theme and are cached by key.
 2. `officePalette(theme)` gives one colour per slot. Floor, walls and status colours come from the
    theme; skin, hair and clothing are fixed.
@@ -29,6 +29,7 @@ A tile is 16 px (`TILE`). Anchors are in sprite pixels from the top left.
 | Sprite | Size | Anchor | Frames |
 | --- | --- | --- | --- |
 | character | 16 × 24 | 8, 24 (under the feet) | idle 2, walk 4, sit 2, sleep 2, drink 2, talk 2, stretch 2, doze 2 |
+| character shadow | 16 × 3 | 8, 3 (ground point) | walk 4, otherwise 1 |
 | character, pose `lie` | 24 × 16 | 12, 16 | 2 |
 | desk | 32 × 28 | 16, 28; the monitor is the top 12 rows | lit 8, off 1, error 1 |
 | chair | 16 × 16 | 8, 16 | 1 |
@@ -60,7 +61,15 @@ ignores facing.
 
 Roles differ in outline, not only colour: the overseer has a brimmed hat and a cape, the nexus a
 headset with an antenna, a meow cat ears and a tail, a plain agent none of these. `lookFor(agentId)`
-picks skin, hair, hair style, shirt and trousers, the same every time for the same id.
+picks skin, hair, hair style, shirt and trousers, the same every time for the same id. Skin, hair,
+shirts and trousers use small light-to-shadow colour ramps; eyes, hair glints, collars and trouser
+creases add detail without changing the 16 × 24 silhouette or its foot anchor. Walking uses four
+distinct key poses with the same canvas and anchor, so the feet alternate while the head stays in
+the same place. A small ground shadow is anchored separately under the feet; it changes width with
+the walk and stays still for other poses. Lifted sitters do not get a floor shadow.
+
+The sprite-sheet review principles were informed by [SpriteCast](https://github.com/Sunghwan0112/spritecast)
+(MIT). Lobby contains no SpriteCast code or artwork.
 
 ## Scale
 

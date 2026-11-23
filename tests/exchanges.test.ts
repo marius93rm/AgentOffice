@@ -117,6 +117,7 @@ describe("eventsFromStream", () => {
         event: "message",
         text: "Please fix the login form.",
         label: "Please fix the login form.",
+        fullText: "Please fix the login form.\nDetails follow.",
         at: 1_000,
         seq: 7,
       },
@@ -155,7 +156,7 @@ describe("eventsFromStream", () => {
       eventsFromStream(timeline("a", { type: "tool_call", callId: "c1", name: "mcp__paseo__list_agents", status: "running" }), 5),
     ).toEqual([{ kind: "tool", agentId: "a", callId: "c1", name: "list agents", status: "running", at: 5 }]);
     expect(eventsFromStream({ agentId: "a", event: { type: "turn_failed", error: "rate limited\nretry later" } }, 5)).toEqual([
-      { kind: "failed", agentId: "a", text: "rate limited", label: "rate limited", at: 5 },
+      { kind: "failed", agentId: "a", text: "rate limited", label: "rate limited", fullText: "rate limited\nretry later", at: 5 },
     ]);
     expect(
       eventsFromStream({ agentId: "a", event: { type: "permission_requested", request: { id: "p1", name: "Bash", title: "Run npm test" } } }, 5),

@@ -2,7 +2,7 @@ import type { PluginTheme } from "@getpaseo/plugin";
 import { Icon, ScrollView } from "@getpaseo/plugin/client/react-native";
 import * as hostUi from "@getpaseo/plugin/client/react-native";
 import type { PaseoApi } from "./paseo-types";
-import { memo, useCallback, useLayoutEffect, useMemo, useRef, type ComponentType } from "react";
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
 import {
   Pressable,
   Text,
@@ -17,7 +17,7 @@ import {
 } from "react-native";
 import { FOLLOWING, bounded, chatRows, followResize, followScroll, readableText, type ChatItem, type ChatRow } from "./chat-model";
 import type { CrewState } from "./model";
-import { IconButton, Muted, font, pressStyle, radius, space } from "./ui";
+import { Button, IconButton, Muted, font, pressStyle, radius, space } from "./ui";
 import { useChat } from "./use-chat";
 import { anchorScroll } from "./web";
 
@@ -46,16 +46,18 @@ type StreamedTextComponent = ComponentType<{ text: string; phase: RevealPhase; s
 const host = hostUi as unknown as {
   StreamedText?: StreamedTextComponent;
   useRevealedText?: (text: string, phase: RevealPhase) => string;
+  Markdown?: ComponentType<{ children: string }>;
 };
 const HostStreamedText = typeof host.StreamedText === "function" ? host.StreamedText : null;
 const useRevealedText = typeof host.useRevealedText === "function" ? host.useRevealedText : (text: string) => text;
 
 /** The text being written appears as it streams; anything finished, or with less motion asked for, is shown whole. */
-function AssistantText({ theme, text, streaming }: { theme: PluginTheme; text: string; streaming: boolean }) {
+function AssistantText({ theme, text, streaming, roomy }: { theme: PluginTheme; text: string; streaming: boolean; roomy: boolean }) {
   const phase: RevealPhase = streaming ? "streaming" : "complete";
-  const style: StyleProp<TextStyle> = { color: theme.colors.foreground, fontSize: font.sm, lineHeight: font.sm * 1.5 };
-  if (HostStreamedText) return <HostStreamedText text={text} phase={phase} selectable style={style} />;
+  const style: StyleProp<TextStyle> = { color: theme.colors.foreground, fontSize: roomy ? 15 : font.base, lineHeight: roomy ? 23 : 19 };
   const shown = useRevealedText(text, phase);
+  if (roomy && !streaming && host.Markdown) return <host.Markdown>{text}</host.Markdown>;
+  if (HostStreamedText) return <HostStreamedText text={text} phase={phase} selectable style={style} />;
   return (
     <Text selectable style={style}>
       {shown}
@@ -99,6 +101,7 @@ const Row = memo(function Row({
   streaming,
   onOpen,
   maxChars,
+  roomy,
 }: {
   theme: PluginTheme;
   row: ChatRow;
@@ -106,7 +109,9 @@ const Row = memo(function Row({
   onOpen: (() => void) | null;
   /** Cuts each message to this many characters. */
   maxChars?: number;
+  roomy: boolean;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const { colors } = theme;
   if (row.kind === "tools") {
     const latest = row.tools[row.tools.length - 1] as Extract<ChatItem, { kind: "tool" }>;
@@ -114,26 +119,31 @@ const Row = memo(function Row({
       latest.status === "failed" ? colors.statusDanger : latest.status === "running" ? colors.accent : colors.foregroundMuted;
     const more = row.tools.length - 1;
     return (
-      <View
-        accessible
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
         accessibilityLabel={`${row.tools.length === 1 ? "Tool call" : `${row.tools.length} tool calls, the latest`} ${latest.label}${latest.summary ? `, ${latest.summary}` : ""}, ${latest.status}`}
-        style={{ flexDirection: "row", alignItems: "center", gap: space.xs + 2, minHeight: 20 }}
+        onPress={() => setExpanded((open) => !open)}
+        style={{ borderRadius: radius.md, backgroundColor: colors.surface1, padding: roomy ? space.md : space.sm, gap: space.sm, minHeight: roomy ? 44 : 32 }}
       >
-        <Icon name={TOOL_ICON[latest.status] ?? "Wrench"} size={12} color={color} />
-        <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, fontSize: font.xs, color: colors.foregroundMuted }}>
-          <Text style={{ color: colors.foreground, fontWeight: "500" }}>{latest.word}</Text>
-          {latest.summary ? `  ${latest.summary}` : ""}
-        </Text>
-        {more > 0 ? (
-          <Muted theme={theme} size={font.xs}>
-            +{more}
-          </Muted>
-        ) : null}
-      </View>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: space.sm }}>
+          <Icon name={TOOL_ICON[latest.status] ?? "Wrench"} size={14} color={color} />
+          <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, fontSize: roomy ? 13 : font.sm, color: colors.foregroundMuted }}>
+            <Text style={{ color: colors.foreground, fontWeight: "500" }}>{latest.word}</Text>
+            {latest.summary ? `  ${latest.summary}` : ""}
+          </Text>
+          {more > 0 ? <Muted theme={theme} size={12}>+{more}</Muted> : null}
+          <Icon name={expanded ? "ChevronUp" : "ChevronDown"} size={15} color={colors.foregroundMuted} />
+        </View>
+        {expanded ? row.tools.map((tool) => (
+          <Muted key={tool.key} theme={theme} size={roomy ? 13 : 12}>{[tool.label, tool.status, tool.summary].filter(Boolean).join(" · ")}</Muted>
+        )) : null}
+      </Pressable>
     );
   }
   const { item } = row;
   const full = "text" in item ? (item.kind === "assistant" ? readableText(item.text) : item.text) : "";
+  if (item.kind === "assistant" && /^\s*(?:-{3,}|\*{3,}|_{3,})?\s*$/.test(full)) return null;
   const clipped = maxChars !== undefined && full.length > maxChars ? `${bounded(full, maxChars).text.trimEnd()}…` : full;
   const rest =
     ("cut" in item && item.cut) || clipped !== full ? (
@@ -144,7 +154,7 @@ const Row = memo(function Row({
       return (
         <View style={{ gap: space.xs }}>
           <View style={{ alignSelf: "flex-end", maxWidth: "92%", backgroundColor: colors.surface2, borderRadius: radius.md, paddingHorizontal: space.sm + 2, paddingVertical: space.xs + 2 }}>
-            <Text selectable style={{ color: colors.foreground, fontSize: font.sm, lineHeight: font.sm * 1.45 }}>
+            <Text selectable style={{ color: colors.foreground, fontSize: roomy ? 15 : font.base, lineHeight: roomy ? 22 : 19 }}>
               {clipped}
             </Text>
           </View>
@@ -154,7 +164,7 @@ const Row = memo(function Row({
     case "assistant":
       return (
         <View style={{ gap: space.xs }}>
-          <AssistantText theme={theme} text={clipped} streaming={streaming} />
+          <AssistantText theme={theme} text={clipped} streaming={streaming} roomy={roomy} />
           {rest}
         </View>
       );
@@ -217,7 +227,9 @@ export function AgentChat({
   still,
   onOpen,
   compact,
+  roomy = false,
   style,
+  children,
 }: {
   theme: PluginTheme;
   paseo: PaseoApi;
@@ -231,7 +243,9 @@ export function AgentChat({
   onOpen: (() => void) | null;
   /** Under a list row: the last few lines, no scroller of its own. */
   compact?: boolean;
+  roomy?: boolean;
   style?: StyleProp<ViewStyle>;
+  children?: ReactNode;
 }) {
   const chat = useChat(paseo, agentId, state, shown);
   const allRows = useMemo(() => chatRows(chat.state.items), [chat.state.items]);
@@ -240,16 +254,25 @@ export function AgentChat({
   const scroller = useRef<NativeScrollView>(null);
   // Following the end, until scrolled away from it; see `followScroll`.
   const follow = useRef(FOLLOWING);
+  const [away, setAway] = useState(false);
   // The browser's scroll anchoring is off while following and on while reading; see `anchorScroll`.
   const setFollow = useCallback((next: typeof FOLLOWING) => {
-    if (next.following !== follow.current.following) anchorScroll(scroller.current, !next.following);
+    if (next.following !== follow.current.following) {
+      anchorScroll(scroller.current, !next.following);
+      setAway(!next.following);
+    }
     follow.current = next;
   }, []);
   // Another agent's chat starts at its end.
   useLayoutEffect(() => {
     follow.current = { ...FOLLOWING, viewport: follow.current.viewport };
+    setAway(false);
     anchorScroll(scroller.current, false);
   }, [agentId]);
+  const jumpToLatest = () => {
+    setFollow({ ...follow.current, following: true });
+    scroller.current?.scrollToEnd({ animated: false });
+  };
   const onScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
     setFollow(followScroll(follow.current, contentOffset.y, contentSize.height, layoutMeasurement.height));
@@ -273,8 +296,16 @@ export function AgentChat({
     status = { text: "Not live: showing what was loaded", tone: "muted", retry: true };
   else if (rows.length === 0) status = { text: "Nothing in the chat yet", tone: "muted", retry: false };
 
+  const heading = (
+    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: space.sm }}>
+        <Text accessibilityRole="header" style={{ color: colors.foreground, fontSize: roomy ? 15 : 13, fontWeight: "600" }}>Recent conversation</Text>
+        {chat.live ? <Muted theme={theme} size={12}>Live</Muted> : null}
+    </View>
+  );
   const lines = (
     <>
+      {children}
+      {heading}
       {earlier ? <Pointer theme={theme} label="Earlier messages are in the full chat" onOpen={onOpen} /> : null}
       {rows.map((row) => (
         <Row
@@ -284,6 +315,7 @@ export function AgentChat({
           streaming={row.key === streamingKey}
           onOpen={onOpen}
           maxChars={compact ? COMPACT_CHARS : undefined}
+          roomy={roomy}
         />
       ))}
       {status ? (
@@ -313,11 +345,19 @@ export function AgentChat({
         scrollEventThrottle={100}
         onContentSizeChange={onContentSizeChange}
         onLayout={onLayout}
+        keyboardShouldPersistTaps="handled"
         contentContainerStyle={{ gap: space.sm + 2, paddingVertical: space.sm }}
         accessibilityLabel="Recent chat, read-only"
       >
         {lines}
       </ScrollView>
+      {away && rows.length > 0 ? <Button theme={theme} size={roomy ? "touch" : "sm"} variant="outline"
+        icon="ArrowDown" label="Jump to latest" onPress={jumpToLatest} /> : null}
     </View>
   );
+}
+
+/** The demo uses the same transcript rows as a real chat. */
+export function TranscriptPreview({ theme, items }: { theme: PluginTheme; items: readonly ChatItem[] }) {
+  return <>{chatRows(items).map((row) => <Row key={row.key} theme={theme} row={row} streaming={false} onOpen={null} roomy />)}</>;
 }

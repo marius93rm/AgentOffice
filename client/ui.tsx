@@ -84,15 +84,17 @@ export function StatusDot({
 }
 
 type ButtonVariant = "default" | "secondary" | "outline" | "ghost" | "destructive";
-type ButtonSize = "xs" | "sm" | "md";
+type ButtonSize = "xs" | "sm" | "md" | "touch";
 
-const buttonHeight: Record<ButtonSize, number> = { xs: 28, sm: 32, md: 40 };
-const buttonFont: Record<ButtonSize, number> = { xs: font.sm, sm: font.base, md: font.base };
-const buttonPad: Record<ButtonSize, number> = { xs: space.sm, sm: space.md, md: space.lg };
+const buttonHeight: Record<ButtonSize, number> = { xs: 28, sm: 32, md: 40, touch: 44 };
+const buttonFont: Record<ButtonSize, number> = { xs: font.sm, sm: font.base, md: font.base, touch: font.lg };
+const buttonPad: Record<ButtonSize, number> = { xs: space.sm, sm: space.md, md: space.lg, touch: space.md };
 
 export function Button({
   theme,
   label,
+  accessibilityLabel,
+  numberOfLines,
   onPress,
   variant = "secondary",
   size = "sm",
@@ -102,6 +104,8 @@ export function Button({
 }: {
   theme: PluginTheme;
   label: string;
+  accessibilityLabel?: string;
+  numberOfLines?: number;
   onPress: () => void;
   variant?: ButtonVariant;
   size?: ButtonSize;
@@ -123,12 +127,14 @@ export function Button({
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
       accessibilityState={{ disabled: disabled ?? false }}
       disabled={disabled}
       onPress={onPress}
       style={pressStyle(({ pressed, hovered }) => [
         {
-          height: buttonHeight[size],
+          minHeight: buttonHeight[size],
+          paddingVertical: space.xs,
           paddingHorizontal: buttonPad[size],
           borderRadius: radius.md,
           backgroundColor:
@@ -145,7 +151,7 @@ export function Button({
       ])}
     >
       {icon ? <Icon name={icon} size={14} color={text} /> : null}
-      <Text style={{ color: text, fontSize: buttonFont[size], fontWeight: "500" }} numberOfLines={1}>
+      <Text numberOfLines={numberOfLines} style={{ color: text, fontSize: buttonFont[size], fontWeight: "500", flexShrink: 1, textAlign: "center" }}>
         {label}
       </Text>
     </Pressable>
@@ -198,6 +204,8 @@ export function Chip({
   count,
   selected,
   color,
+  touch = false,
+  disabled = false,
   onPress,
 }: {
   theme: PluginTheme;
@@ -205,21 +213,25 @@ export function Chip({
   count?: number;
   selected: boolean;
   color?: string;
+  touch?: boolean;
+  disabled?: boolean;
   onPress: () => void;
 }) {
   const { colors } = theme;
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityState={{ selected }}
+      accessibilityState={{ selected, disabled }}
+      disabled={disabled}
       onPress={onPress}
       style={pressStyle(({ hovered }) => ({
-        height: 26,
+        minHeight: touch ? 44 : 26,
         paddingHorizontal: space.sm + 2,
         borderRadius: 13,
         flexDirection: "row",
         alignItems: "center",
         gap: space.xs + 1,
+        opacity: disabled ? 0.55 : 1,
         backgroundColor: selected ? colors.surface2 : hovered ? colors.surface1 : "transparent",
       }))}
     >
@@ -229,7 +241,7 @@ export function Chip({
       <Text
         style={{
           color: selected ? colors.foreground : colors.foregroundMuted,
-          fontSize: font.sm,
+          fontSize: touch ? font.base : font.sm,
           fontWeight: selected ? "500" : "400",
         }}
       >

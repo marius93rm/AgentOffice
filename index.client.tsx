@@ -1,6 +1,7 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { addCrewHeaderButtons } from "./client/header-buttons";
 import { CrewPanel, CrewSurface } from "./client/main";
+import { DemoSurface } from "./client/demo";
 
 export default function contribute(client: PluginClientContext) {
   const disposers = [
@@ -13,6 +14,7 @@ export default function contribute(client: PluginClientContext) {
       Component: CrewPanel,
     }),
     client.addScreen({ id: "lobby", title: "Lobby", Component: CrewSurface }),
+    client.addScreen({ id: "lobby-demo", title: "Lobby demo", Component: DemoSurface }),
     addCrewHeaderButtons(client),
     client.addCommandCenterItem({
       id: "open-lobby",
@@ -29,6 +31,14 @@ export default function contribute(client: PluginClientContext) {
       keywords: ["agents", "lobby", "crew", "office", "rooms"],
       context: "global",
       onSelect: (context) => context.openScreen({ screenId: "lobby" }),
+    }),
+    client.addCommandCenterItem({
+      id: "open-lobby-demo",
+      title: "Open Lobby demo",
+      icon: "Play",
+      keywords: ["lobby", "demo", "office"],
+      context: "global",
+      onSelect: (context) => context.openScreen({ screenId: "lobby-demo" }),
     }),
   ];
   return () => {

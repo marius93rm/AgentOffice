@@ -1,3 +1,6 @@
+import { describeTool } from "./tool-activity";
+import { ACTIVITY_TTL, operationDeadline, operationOfTool, tasksOf, type Operation, type TaskSnapshot } from "./operations";
+
 /**
  * What agents say and send, reduced to what the office shows right now.
  *
@@ -23,6 +26,7 @@ export type FeedEvent =
       text: string;
       /** The first line in full, for a screen reader; `text` is cut for a bubble. */
       label?: string;
+      fullText?: string;
       at: number;
       seq?: number;
     }
@@ -37,18 +41,19 @@ export type FeedEvent =
       at: number;
       seq?: number;
     }
-  | { kind: "tool"; agentId: string; callId: string; name: string; status: ToolStatus; at: number; seq?: number }
-  | { kind: "failed"; agentId: string; text: string; label?: string; at: number }
+  | { kind: "tool"; agentId: string; callId: string; name: string; description?: string; status: ToolStatus; operation?: Operation; at: number; seq?: number }
+  | { kind: "tasks"; agentId: string; snapshot: TaskSnapshot; at: number; seq?: number }
+  | { kind: "failed"; agentId: string; text: string; label?: string; fullText?: string; at: number }
   | { kind: "permission"; agentId: string; requestId: string; text: string; label?: string; at: number }
   | { kind: "permission-resolved"; agentId: string; requestId: string; at: number }
-  | { kind: "turn-ended"; agentId: string; at: number }
+  | { kind: "turn-ended"; agentId: string; at: number; outcome?: "completed" | "canceled"; turnId?: string }
   /** The timeline epoch was replaced; sequence numbers start over. */
   | { kind: "reset"; agentId: string };
 
 export const BUBBLE_MAX_CHARS = 48;
 /** How much of a line a screen reader gets: the bubble shows far less. */
 export const LABEL_MAX_CHARS = 200;
-const SAY_BUFFER_CHARS = 400;
+const SAY_BUFFER_CHARS = 8_000;
 const AGENT_MESSAGE_CALL_PREFIX = "paseo-agent-message:";
 
 /**
@@ -126,6 +131,7 @@ export interface TimelineItemLike {
   name?: unknown;
   status?: unknown;
   detail?: unknown;
+  items?: unknown;
   agentMessage?: unknown;
 }
 
@@ -201,6 +207,7 @@ function exchangeFromToolCall(item: TimelineItemLike, context: ItemContext): Fee
     event,
     text: exchangeText(event, body),
     label: exchangeText(event, body, LABEL_MAX_CHARS),
+    ...(event === "message" ? { fullText: body.slice(0, SAY_BUFFER_CHARS) } : {}),
     at: context.at,
     ...(context.seq === undefined ? {} : { seq: context.seq }),
   };
@@ -228,17 +235,26 @@ function eventsFromItem(item: TimelineItemLike | null | undefined, context: Item
       const callId = text(item.callId);
       const status = text(item.status);
       if (!callId || !status || !TOOL_STATUSES.includes(status)) return [];
+      const name = toolLabel(text(item.name) ?? "");
+      const description = describeTool(item.detail, name, status);
+      const operation = operationOfTool(context.agentId, callId, name, item.detail, status as ToolStatus, context.at);
       return [
         {
           kind: "tool",
           agentId: context.agentId,
           callId,
-          name: toolLabel(text(item.name) ?? ""),
-          status: status as ToolStatus,
+          name,
+          ...(description === name ? {} : { description }),
+          status: operation.phase,
+          ...(item.detail === undefined ? {} : { operation }),
           at: context.at,
           ...seq,
         },
       ];
+    }
+    case "todo": {
+      const tasks = tasksOf(item.items, context.agentId, context.at, context.seq);
+      return tasks ? [{ kind: "tasks", agentId: context.agentId, snapshot: { at: context.at, sequence: context.seq, tasks }, at: context.at, ...seq }] : [];
     }
     default:
       return [];
@@ -283,12 +299,13 @@ export function eventsFromStream(payload: StreamPayloadLike, receivedAt: number)
           agentId,
           text: firstLine(text(event.error) ?? "") || "Failed",
           label: firstLine(text(event.error) ?? "", LABEL_MAX_CHARS) || "Failed",
+          ...(event.error ? { fullText: event.error.slice(0, SAY_BUFFER_CHARS) } : {}),
           at: receivedAt,
         },
       ];
     case "turn_completed":
     case "turn_canceled":
-      return [{ kind: "turn-ended", agentId, at: receivedAt }];
+      return [{ kind: "turn-ended", agentId, at: receivedAt, outcome: event.type === "turn_completed" ? "completed" : "canceled", turnId: event.turnId }];
     case "permission_requested": {
       const requestId = text(event.request?.id);
       if (!requestId) return [];
@@ -349,6 +366,29 @@ export function eventsFromHistory(
   return out;
 }
 
+/** Compact timeline evidence shared by the runtime, notifications and replay. */
+export function operationOfEvent(event: FeedEvent): Operation | null {
+  switch (event.kind) {
+    case "tool":
+      return event.operation ?? operationOfTool(event.agentId, event.callId, event.name, undefined, event.status, event.at);
+    case "exchange":
+      return event.event === "message" ? { id: event.id, agentId: event.to, from: event.from, kind: "messaging",
+        at: event.at, phase: "completed", source: "message" } : null;
+    case "say":
+      return { id: event.key, agentId: event.agentId, kind: "messaging", at: event.at, phase: "completed", source: "message" };
+    case "failed":
+      return { id: String(event.at), agentId: event.agentId, kind: "error", at: event.at, phase: "failed", source: "turn" };
+    case "turn-ended":
+      return event.outcome === "completed" ? { id: event.turnId ?? String(event.at), agentId: event.agentId,
+        kind: "completion", at: event.at, phase: "completed", source: "turn" } : null;
+    case "permission":
+    case "permission-resolved":
+      return { id: event.requestId, agentId: event.agentId, kind: "permission", at: event.at,
+        phase: event.kind === "permission" ? "running" : "completed", source: "permission" };
+    default: return null;
+  }
+}
+
 export type BubbleTone = "say" | "tool" | "tell" | "ask" | "alert";
 
 export interface Bubble {
@@ -358,6 +398,8 @@ export interface Bubble {
   text: string;
   /** The same in full, for a screen reader. */
   label: string;
+  /** Source text for the expanded bubble. */
+  fullText?: string;
   at: number;
   expiresAt: number;
   /** Identity of what the bubble is about: a message key, call id, request id or message-id. */
@@ -415,6 +457,9 @@ export interface FeedState {
   cursors: ReadonlyMap<string, number>;
   /** agentId → raw text of the assistant message being streamed. */
   drafts: ReadonlyMap<string, { key: string; text: string }>;
+  latest: ReadonlyMap<string, Operation>;
+  running: ReadonlyMap<string, readonly Operation[]>;
+  tasks: ReadonlyMap<string, TaskSnapshot>;
 }
 
 export const EMPTY_FEED: FeedState = {
@@ -423,6 +468,9 @@ export const EMPTY_FEED: FeedState = {
   seen: new Map(),
   cursors: new Map(),
   drafts: new Map(),
+  latest: new Map(),
+  running: new Map(),
+  tasks: new Map(),
 };
 
 interface Draft {
@@ -431,6 +479,37 @@ interface Draft {
   seen: Map<string, number>;
   cursors: Map<string, number>;
   drafts: Map<string, { key: string; text: string }>;
+  latest: Map<string, Operation>;
+  running: Map<string, readonly Operation[]>;
+  tasks: Map<string, TaskSnapshot>;
+}
+
+function newerTaskSnapshot(before: TaskSnapshot | undefined, next: TaskSnapshot): boolean {
+  if (!before) return true;
+  if (before.sequence !== undefined && next.sequence !== undefined) return next.sequence > before.sequence;
+  return next.at >= before.at;
+}
+
+/** A targeted board read updates only the board. The live stream still owns its cursor. */
+export function mergeTaskSnapshot(state: FeedState, agentId: string, snapshot: TaskSnapshot): FeedState {
+  if (!newerTaskSnapshot(state.tasks.get(agentId), snapshot)) return state;
+  return { ...state, tasks: new Map(state.tasks).set(agentId, snapshot) };
+}
+
+function observe(draft: Draft, event: FeedEvent): void {
+  if (event.kind === "tasks") {
+    if (newerTaskSnapshot(draft.tasks.get(event.agentId), event.snapshot)) draft.tasks.set(event.agentId, event.snapshot);
+    return;
+  }
+  const next = operationOfEvent(event);
+  if (event.kind === "turn-ended" || event.kind === "failed") draft.running.delete(event.agentId);
+  if (!next || (draft.latest.get(next.agentId)?.at ?? -Infinity) > next.at) return;
+  draft.latest.set(next.agentId, next);
+  if (next.source !== "tool") return;
+  const others = (draft.running.get(next.agentId) ?? []).filter((op) => op.id !== next.id);
+  if (next.phase === "running") others.push(next);
+  if (others.length === 0) draft.running.delete(next.agentId);
+  else draft.running.set(next.agentId, others.slice(-16));
 }
 
 /** A louder bubble holds its place until it expires; an equal or louder one replaces it. */
@@ -449,12 +528,17 @@ function apply(draft: Draft, event: FeedEvent, ttl: FeedTtl): void {
   if (event.kind === "reset") {
     draft.cursors.delete(event.agentId);
     draft.drafts.delete(event.agentId);
+    draft.bubbles.delete(event.agentId);
+    draft.latest.delete(event.agentId);
+    draft.running.delete(event.agentId);
+    draft.tasks.delete(event.agentId);
     return;
   }
   if (event.kind === "exchange") {
     // message-id is the identity, whichever path and sequence number delivered it.
     if (draft.seen.has(event.id)) return;
     draft.seen.set(event.id, event.at);
+    observe(draft, event);
     const expiresAt = event.at + ttl.exchange;
     draft.exchanges.push({
       id: event.id,
@@ -472,6 +556,7 @@ function apply(draft: Draft, event: FeedEvent, ttl: FeedTtl): void {
         tone: "tell",
         text: event.text,
         label: event.label ?? event.text,
+        ...(event.fullText ? { fullText: event.fullText } : {}),
         at: event.at,
         expiresAt: event.at + ttl.tell,
         key: event.id,
@@ -483,9 +568,14 @@ function apply(draft: Draft, event: FeedEvent, ttl: FeedTtl): void {
   if ("seq" in event && event.seq !== undefined) {
     const agentId = event.agentId;
     const cursor = draft.cursors.get(agentId);
-    if (cursor !== undefined && event.seq <= cursor) return;
+    if (cursor !== undefined && event.seq <= cursor) {
+      // A tail page can contain a board snapshot before a newer, unrelated live event.
+      if (event.kind === "tasks") observe(draft, event);
+      return;
+    }
     draft.cursors.set(agentId, event.seq);
   }
+  observe(draft, event);
   switch (event.kind) {
     case "say": {
       const previous = draft.drafts.get(event.agentId);
@@ -500,6 +590,7 @@ function apply(draft: Draft, event: FeedEvent, ttl: FeedTtl): void {
         tone: "say",
         text: line,
         label: firstLine(kept, LABEL_MAX_CHARS),
+        fullText: kept,
         at: event.at,
         expiresAt: event.at + ttl.say,
         key: event.key,
@@ -512,7 +603,7 @@ function apply(draft: Draft, event: FeedEvent, ttl: FeedTtl): void {
         agentId: event.agentId,
         tone: "tool",
         text: toolWord(event.name),
-        label: event.name,
+        label: event.description ?? event.name,
         at: event.at,
         expiresAt: event.at + (running ? ttl.toolRunning : ttl.toolDone),
         key: event.callId,
@@ -526,6 +617,7 @@ function apply(draft: Draft, event: FeedEvent, ttl: FeedTtl): void {
         tone: "alert",
         text: event.text,
         label: event.label ?? event.text,
+        ...(event.fullText ? { fullText: event.fullText } : {}),
         at: event.at,
         expiresAt: event.at + ttl.alert,
         key: `failed:${event.at}`,
@@ -554,6 +646,7 @@ function apply(draft: Draft, event: FeedEvent, ttl: FeedTtl): void {
       draft.drafts.delete(event.agentId);
       return;
     }
+    case "tasks": return;
   }
 }
 
@@ -574,6 +667,9 @@ export function reduceFeed(
     seen: new Map(state.seen),
     cursors: new Map(state.cursors),
     drafts: new Map(state.drafts),
+    latest: new Map(state.latest),
+    running: new Map(state.running),
+    tasks: new Map(state.tasks),
   };
   for (const event of events) apply(draft, event, ttl);
   for (const [agentId, bubble] of draft.bubbles) {
@@ -582,26 +678,36 @@ export function reduceFeed(
   for (const [id, at] of draft.seen) {
     if (at + SEEN_RETENTION_MS <= now) draft.seen.delete(id);
   }
+  for (const [agentId, running] of draft.running) {
+    const fresh = running.filter((operation) => operation.at + ACTIVITY_TTL > now);
+    if (fresh.length === 0) draft.running.delete(agentId);
+    else if (fresh.length !== running.length) draft.running.set(agentId, fresh);
+  }
   return {
     bubbles: draft.bubbles,
     exchanges: draft.exchanges.filter((exchange) => exchange.expiresAt > now).sort((a, b) => a.at - b.at),
     seen: draft.seen,
     cursors: draft.cursors,
     drafts: draft.drafts,
+    latest: draft.latest,
+    running: draft.running,
+    tasks: draft.tasks,
   };
 }
 
 /** Forgets agents that left the office, so a long session does not accumulate them. */
-export function retainAgents(state: FeedState, keep: ReadonlySet<string>): FeedState {
-  const stale = (source: ReadonlyMap<string, unknown>) => [...source.keys()].some((agentId) => !keep.has(agentId));
-  if (!stale(state.bubbles) && !stale(state.cursors) && !stale(state.drafts)) return state;
-  const only = <T,>(source: ReadonlyMap<string, T>) =>
-    new Map([...source].filter(([agentId]) => keep.has(agentId)));
+export function retainAgents(state: FeedState, keep: ReadonlySet<string>, directory: ReadonlySet<string> = keep): FeedState {
+  const only = <T,>(source: ReadonlyMap<string, T>, ids: ReadonlySet<string> = keep) => {
+    if ([...source.keys()].every((id) => ids.has(id))) return source;
+    return new Map([...source].filter(([id]) => ids.has(id)));
+  };
+  const bubbles = only(state.bubbles), cursors = only(state.cursors), drafts = only(state.drafts), running = only(state.running);
+  const latest = only(state.latest, directory), tasks = only(state.tasks, directory);
+  if (bubbles === state.bubbles && cursors === state.cursors && drafts === state.drafts && running === state.running
+    && latest === state.latest && tasks === state.tasks) return state;
   return {
     ...state,
-    bubbles: only(state.bubbles),
-    cursors: only(state.cursors),
-    drafts: only(state.drafts),
+    bubbles, cursors, drafts, running, latest, tasks,
   };
 }
 
@@ -627,4 +733,16 @@ export function visibleFeed(state: FeedState, now: number): VisibleFeed {
   const exchanges = state.exchanges.filter((exchange) => exchange.expiresAt > now);
   for (const exchange of exchanges) note(exchange.expiresAt);
   return { bubbles, exchanges, nextExpiry };
+}
+
+export function operationExpiry(state: FeedState, now: number): number | null {
+  let next = Infinity;
+  for (const operations of state.running.values()) for (const operation of operations) {
+    if (operation.at + ACTIVITY_TTL > now) next = Math.min(next, operation.at + ACTIVITY_TTL);
+  }
+  for (const operation of state.latest.values()) {
+    const expires = operationDeadline(operation);
+    if (expires !== null && expires > now) next = Math.min(next, expires);
+  }
+  return next === Infinity ? null : next;
 }

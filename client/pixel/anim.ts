@@ -1,4 +1,4 @@
-import { CHARACTER_FRAMES, character, type CharacterPose, type CharacterSpec } from "./characters";
+import { CHARACTER_FRAMES, character, characterShadow, type CharacterPose, type CharacterSpec } from "./characters";
 import { EMOTE_FRAMES, EMOTE_FRAME_MS, emote, type EmoteId } from "./emotes";
 import { blit, canvas, type Bitmap, type Point } from "./grid";
 import { ICON_FRAMES, ICON_FRAME_MS, icon, type IconState } from "./icons";
@@ -73,8 +73,16 @@ export function emoteAnimation(id: EmoteId): Animation {
 /** A suggested time per frame for each pose, in milliseconds. */
 export const POSE_FRAME_MS: Readonly<Record<CharacterPose, number>> = {
   idle: 900,
-  walk: 140,
+  walk: 65,
+  settle: 110,
   sit: 220,
+  read: 650,
+  board: 600,
+  plan: 450,
+  terminal: 360,
+  watch: 600,
+  frustrated: 460,
+  celebrate: 300,
   sleep: 1200,
   drink: 600,
   talk: 320,
@@ -84,8 +92,21 @@ export const POSE_FRAME_MS: Readonly<Record<CharacterPose, number>> = {
 };
 
 /** A character's pose as a loop. The strip's key is the first frame's, so equal specs share it. */
-export function characterAnimation(spec: Omit<CharacterSpec, "frame">): Animation {
+export function characterAnimation(spec: Omit<CharacterSpec, "frame">, shadow = false): Animation {
   const pose = spec.pose ?? "idle";
-  const frames = each(CHARACTER_FRAMES[pose], (frame) => character({ ...spec, frame }));
-  return animation(`char:${frames[0]!.key}`, frames, POSE_FRAME_MS[pose]);
+  const first = character(spec);
+  const key = `char:${first.key}${shadow ? ":shadow" : ""}`;
+  const known = cache.get(key);
+  if (known) return known;
+  const frames = each(CHARACTER_FRAMES[pose], (frame) => {
+    const body = frame === 0 ? first : character({ ...spec, frame });
+    if (!shadow || pose === "lie") return body;
+    // Keep the shadow and the body in the same strip and advance both with one image.
+    const ground = characterShadow(pose === "walk" ? frame : 0);
+    const merged = canvas(body.width, body.height);
+    blit(merged, ground, body.anchor.x - ground.anchor.x, body.anchor.y - ground.anchor.y);
+    blit(merged, body);
+    return { ...merged, anchor: body.anchor, key: body.key + ":shadow" };
+  });
+  return animation(key, frames, POSE_FRAME_MS[pose]);
 }

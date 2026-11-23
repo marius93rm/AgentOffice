@@ -126,6 +126,36 @@ describe("directory controller", () => {
     expect(agents()).toBe(known);
   });
 
+  it.each(["initial load", "manual refetch", "backstop"])("preserves live changes made during %s", async (mode) => {
+    const { daemon, controller, agents } = setup();
+    daemon.agents.set("a2", agent("a2"));
+    if (mode !== "initial load") {
+      controller.start();
+      await settle();
+    }
+    let finish = () => {};
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
+    const list = daemon.api.agents.list;
+    vi.spyOn(daemon.api.agents, "list").mockImplementation(async (input) => {
+      const snapshot = await list(input);
+      if (!input.subscribe) await pending;
+      return snapshot;
+    });
+    if (mode === "initial load") controller.start();
+    else if (mode === "manual refetch") controller.reload();
+    else await vi.advanceTimersByTimeAsync(BACKSTOP_MS);
+    await settle();
+    daemon.emitAgent(upsert(agent("a1", { status: "running" })));
+    daemon.emitAgent(remove("a2"));
+    daemon.emitAgent(upsert(agent("a3")));
+    finish();
+    await settle();
+    expect(agents().get("a1")?.status).toBe("running");
+    expect(agents().has("a2")).toBe(false);
+    expect(agents().has("a3")).toBe(true);
+    controller.stop();
+  });
+
   it("keeps what it had and reports the error when a load fails after it was ready", async () => {
     const { daemon, controller, seen, agents } = setup();
     controller.start();

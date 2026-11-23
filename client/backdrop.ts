@@ -2,6 +2,7 @@ import type { Rect, Room } from "./office-model";
 import { blit, drawn, type Bitmap, type Canvas } from "./pixel/grid";
 import { SHADOW_OF, slotIndex } from "./pixel/palette";
 import { PROPS, TILE, door, prop, tile, type TileId } from "./pixel/props";
+import { wallDecoration } from "./pixel/wall-decor";
 
 /**
  * The office's fixed drawing: each room's floor and furniture, and over the
@@ -45,7 +46,8 @@ export function roomKey(room: Room): string {
     .filter(isCrew)
     .map((pod) => pod.teams.map((team) => `${team.area.x - room.x},${team.area.y - room.y},${team.area.width}x${team.area.height}`).join("+"))
     .join("/");
-  return `room3:${room.width}x${room.height}:f${room.floorTop - room.y}:d${room.door.x - room.x}:w${wall}:${zones}:p${pods}`;
+  const look = `${room.look.floor}/${room.look.wall ?? "auto"}/${room.look.wallDecor.map((item) => `${item.id}@${item.x},${item.y}`).join(",")}`;
+  return `room4:${room.width}x${room.height}:f${room.floorTop - room.y}:d${room.door.x - room.x}:w${wall}:${zones}:p${pods}:l${look}`;
 }
 
 /**
@@ -70,16 +72,17 @@ function shaded(value: number): number {
 function drawRoom(room: Room, out: Canvas): void {
   // Each team of a crew (a lead's people) has a floor of its own; an agent on its own sits on the plain floor.
   const teams = room.pods.filter(isCrew).flatMap((pod) => pod.teams);
+  const wall: TileId = room.look.wall ? ({ paint: "wallPaint", panel: "wallPanel", brick: "wallBrick" } as const)[room.look.wall] : "wall";
   const floorAt = (x: number, y: number): TileId => {
-    if (y < room.floorTop) return "wall";
+    if (y < room.floorTop) return wall;
     // The half wall the appliances, the shelves and the sofa stand against.
-    if (room.lounge.wall && inRect(x, y, room.lounge.wall)) return "wall";
+    if (room.lounge.wall && inRect(x, y, room.lounge.wall)) return wall;
     const zone = room.zones.find((entry) => inRect(x, y, entry));
     if (zone) return zone.kind === "pantry" ? "kitchen" : "carpet";
     const team = teams.findIndex((entry) => inRect(x, y, entry.area));
     if (team >= 0) return POD_FLOORS[team % POD_FLOORS.length] as TileId;
     if (x === room.door.x && y === room.floorTop) return "doormat";
-    return "floor";
+    return room.look.floor;
   };
   // Inside a wall, past its slab, the floor carries on; the mat stays on its own tile.
   const innerAt = (x: number, y: number): TileId => {
@@ -116,6 +119,15 @@ function drawRoom(room: Room, out: Canvas): void {
   }
   // The door stands in the wall's face, at the head of the corridor.
   blit(out, door(room.floorTop - room.y - 1), (room.door.x - room.x) * TILE, TILE);
+  for (const decoration of room.look.wallDecor) {
+    const bitmap = wallDecoration(decoration.id);
+    blit(
+      out,
+      bitmap,
+      Math.round(decoration.x - bitmap.width / 2),
+      Math.round(decoration.y - bitmap.height / 2),
+    );
+  }
   const furniture = room.zones.flatMap((zone) => zone.props);
   // A rug lies flat: straight after the floor, under everything else.
   for (const item of [...furniture.filter((entry) => entry.id === "rug"), ...furniture.filter((entry) => entry.id !== "rug")]) {

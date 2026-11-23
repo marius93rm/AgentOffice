@@ -4,6 +4,7 @@ import { STATE_LABEL, displayTitle, matches, roleOf, type CrewNode, type CrewSta
 import type { Act, Office, Point, Presence } from "./office-model";
 import { SIDE_DOCK_MIN_WIDTH } from "./dock-model";
 import { crispScale } from "./pixel/scale";
+import { normalizeRole, type LobbyRole } from "./roles";
 
 /**
  * Everything the scene decides that is not drawing: how big a tile is, how a
@@ -128,11 +129,10 @@ export function touchSlop(size: number): number {
   return Math.max(0, Math.ceil((MIN_TOUCH - size) / 2));
 }
 
-export type SpriteRole = "overseer" | "nexus" | "meow" | "agent";
+export type SpriteRole = LobbyRole;
 
 export function spriteRole(agent: PaseoAgent): SpriteRole {
-  const role = roleOf(agent)?.toLowerCase();
-  return role === "overseer" || role === "nexus" || role === "meow" ? role : "agent";
+  return normalizeRole(roleOf(agent));
 }
 
 /** What a screen reader hears for a character: what the pixels say. */
@@ -349,12 +349,13 @@ export function actFrame(act: Act, beat: number, seed: number): 0 | 1 {
     case "doze":
       return ((beat >> 2) + seed) % 2 === 0 ? 1 : 0;
     case "read":
+    case "look":
       return 0;
   }
 }
 
 /** How many beats it takes each activity to come back to where it began, whatever the seed. */
-const ACT_BEATS: Record<Act, number> = { drink: 10, stretch: 14, talk: 4, doze: 8, read: 1 };
+const ACT_BEATS: Record<Act, number> = { drink: 10, stretch: 14, talk: 4, doze: 8, read: 1, look: 1 };
 
 /** One loop of an activity, a frame per beat: `actFrame` written out, for whoever animates it without a timer. */
 export function actCycle(act: Act, seed: number): (0 | 1)[] {
@@ -444,6 +445,18 @@ export function roomsInView(office: Office, top: number, bottom: number): string
   return office.rooms
     .filter((room) => room.y < bottom && room.y + room.height > top)
     .map((room) => room.workspaceId);
+}
+
+/** The post a map search takes you to, including visitors and closed agents. */
+export function agentMapPoint(office: Office, agentId: string): Point | undefined {
+  const placed = office.desks.get(agentId)?.seat ?? office.visitors.get(agentId)?.at;
+  if (placed) return placed;
+  const room = office.rooms.find((candidate) => candidate.workspaceId === office.roomOf.get(agentId));
+  return room?.closed?.ids.includes(agentId) ? room.closed.at : room?.door;
+}
+
+export function centeredOffset(point: number, viewport: number, content: number): number {
+  return Math.max(0, Math.min(Math.max(0, content - viewport), point - viewport / 2));
 }
 
 /**

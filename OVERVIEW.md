@@ -10,13 +10,15 @@ A working agent sits typing with code scrolling on its screen and a one-word bub
 
 A message from one agent to another shows as a bubble over the sender and an envelope that travels to the recipient's desk. Characters walk between their desk, the pantry and the lounge instead of jumping. Seats come from who started an agent and when, so nobody moves when somebody else starts or finishes.
 
+Each workspace has its own stable, seeded interior look, with a muted color tint, floor pattern, furniture arrangement and small wall decorations. Its room keeps that look as agents change state.
+
 Selecting a character shows its recent chat, read-only, under its pending permissions with Allow, Deny and Review and icons for details, Open, Message and Archive. A List toggle shows the same agents as rows with a small animated state icon.
 
 An optional `ghostline/role` label on an agent changes its character's outline (`overseer`, `nexus` or `meow`); without it an agent is a plain character. Labels only change the drawing.
 
 ## Size and cost
 
-The office is drawn small on purpose, at the crisp size nearest 1.2 screen pixels per art pixel. A four-desk room with its pantry and lounge fits a 313 pixel Explorer pane as a strip about 115 pixels tall. A pane 720 pixels wide or more draws it larger in step with its width, up to 2. Magnifier buttons beside the search zoom it by hand, and the dock under or beside the office drags to another size; both are kept on the device. A hidden pane holds no timers, subscriptions or requests. With about thirty looping animations on screen the office costs roughly one to four points of one CPU core on an Apple M4; the List view with animated icons costs about the same as no animation. Reduced motion stops every animation and shows first frames.
+The office is drawn small on purpose, at the crisp size nearest 1.2 screen pixels per art pixel. A four-desk room with its pantry and lounge fits a 313 pixel Explorer pane as a strip about 115 pixels tall. A pane 720 pixels wide or more draws it larger in step with its width, up to 2. Magnifier buttons beside the search zoom it by hand, and the dock under or beside the office drags to another size; both are kept on the device. A hidden pane holds no timers, subscriptions or requests. With about thirty looping animations on screen the office costs roughly one to four points of one CPU core on an Apple M4; the List view with animated icons costs about the same as no animation. The office's local Motion switch controls scene animation without changing the host's accessibility preference; List and detail animations still follow system reduced motion.
 
 ## Data and limits
 

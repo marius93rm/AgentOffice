@@ -29,6 +29,8 @@ export const PROP_LEGEND: Legend = {
   A: "glassShade",
   c: "coffee",
   e: "emoteReady",
+  L: "lampGlow",
+  H: "windowGlow",
   "1": "floor",
   "2": "floorAlt",
   "3": "floorSeam",
@@ -53,6 +55,9 @@ export type PropId =
   | "fridge"
   | "counter"
   | "table"
+  | "workbench"
+  | "readingLamp"
+  | "window"
   | "bookshelf"
   | "lowTable"
   | "beanbag"
@@ -61,10 +66,11 @@ export type PropId =
   | "screenV"
   | "stool"
   | "archive";
+export type FloorId = "floor" | "floorAlt" | "floorBoards" | "floorMosaic";
 export type TileId =
-  | "floor"
-  | "floorAlt"
+  | FloorId
   | "wall"
+  | "wallPaint" | "wallPanel" | "wallBrick"
   | "wallCap"
   | "carpet"
   | "kitchen"
@@ -529,6 +535,15 @@ export function archiveLevel(count: number): number {
 
 const FLOOR_ROWS = [...Array.from({ length: 15 }, () => row(["1", 15], "3")), row(["3", 16])];
 const FLOOR_ALT_ROWS = FLOOR_ROWS.map((line) => line.replace(/1/g, "2"));
+const FLOOR_BOARDS_ROWS = Array.from({ length: 16 }, (_, y) =>
+  Array.from({ length: 16 }, (_, x) => {
+    if (y % 4 === 0 || (x + (Math.floor(y / 4) % 2) * 4) % 8 === 0) return "3";
+    return (Math.floor(y / 4) + Math.floor(x / 8)) % 2 === 0 ? "1" : "2";
+  }).join(""),
+);
+const FLOOR_MOSAIC_ROWS = Array.from({ length: 16 }, (_, y) =>
+  Array.from({ length: 16 }, (_, x) => ((x >> 2) + (y >> 2)) % 2 === 0 ? "1" : "2").join(""),
+);
 const WALL_ROWS = [
   row(["6", 16]),
   row(["5", 16]),
@@ -553,6 +568,39 @@ const ENVELOPE_ROWS = [
   "owwwwwwwwwwo",
   "owwwwwwwwwwo",
   "oooooooooooo",
+];
+
+const WORKBENCH_ROWS = [
+  ".....oo.........",
+  "....oMmo..oo....",
+  "....oMMoooMo....",
+  ".oooooMmoMoooo..",
+  ".olllllldddddo..",
+  "odddddddddddddo.",
+  "oDDDDDDDDDDDDDo.",
+  "ooooooDDooooooo.",
+  "..oDo....oDo....",
+  "..oDo....oDo....",
+  "..oDo....oDo....",
+  "..ooo....ooo....",
+];
+
+const READING_LAMP_ROWS = [
+  ".....oooooo.....",
+  "....occcccco....",
+  "...occLLcccco...",
+  "..ocLLLLLLcco...",
+  "..oooooooooooo..",
+  ".......oMo......",
+  ".......oMo......",
+  ".......oMo......",
+  ".......oMo......",
+  ".......oMo......",
+  ".......oMo......",
+  ".......oMo......",
+  "......ooooo.....",
+  ".....oMMMMMo....",
+  ".....ooooooo....",
 ];
 
 export interface PropInfo {
@@ -610,9 +658,21 @@ export const PROP_USES: Readonly<Record<PropId, readonly UsePoint[]>> = {
   counter: [use(0, 1, "idle", "up"), use(1, 1, "idle", "up")],
   bookshelf: [use(0, 1, "idle", "up"), use(1, 1, "idle", "up")],
   table: [use(-1, 0, "idle", "right"), use(1, 0, "idle", "left")],
+  workbench: [use(-1, 0, "idle", "right"), use(1, 0, "idle", "left")],
+  readingLamp: [],
+  window: [use(0, 1, "idle", "up")],
 };
 
 const bottomCentre = (rows: readonly string[]): Point => ({ x: rows[0]!.length / 2, y: rows.length });
+
+const WINDOW_ROWS = [
+  "oooooooooooooo", "onnnnnnnnnnnno", "onHHHoHHHHHHno", "onHHHoHHHHHHno",
+  "onHaooaHHHHHno", "onHaooaaHHHHno", "onoooooooooono", "onAAAoHHHaHHno",
+  "onAAAoAAaaAAno", "onAAAoAAAaAAno", "onnnnnnnnnnnno", "oooooooooooooo",
+];
+const WALL_PAINT_ROWS = Array.from({ length: TILE }, (_, y) => (y > 12 ? "5" : "4").repeat(TILE));
+const WALL_PANEL_ROWS = Array.from({ length: TILE }, (_, y) => y > 12 ? "5".repeat(TILE) : "5444444554444445");
+const WALL_BRICK_ROWS = Array.from({ length: TILE }, (_, y) => y % 4 === 3 ? "5".repeat(TILE) : y % 8 < 4 ? "5444444454444444" : "4444544444445444");
 
 function info(rows: readonly string[], tilesWide: number, frames = 1): PropInfo {
   return {
@@ -635,6 +695,9 @@ export const PROPS: Readonly<Record<PropId, PropInfo>> = {
   fridge: info(FRIDGE_ROWS, 1),
   counter: info(COUNTER_ROWS, 2),
   table: info(TABLE_ROWS, 1),
+  workbench: info(WORKBENCH_ROWS, 1),
+  readingLamp: info(READING_LAMP_ROWS, 1),
+  window: info(WINDOW_ROWS, 1),
   bookshelf: info(BOOKSHELF_ROWS, 2),
   lowTable: info(LOW_TABLE_ROWS, 1),
   beanbag: info(BEANBAG_ROWS, 1),
@@ -655,6 +718,9 @@ const STATIC_ROWS: Readonly<Record<Exclude<PropId, "desk" | "archive">, readonly
   fridge: FRIDGE_ROWS,
   counter: COUNTER_ROWS,
   table: TABLE_ROWS,
+  workbench: WORKBENCH_ROWS,
+  readingLamp: READING_LAMP_ROWS,
+  window: WINDOW_ROWS,
   bookshelf: BOOKSHELF_ROWS,
   lowTable: LOW_TABLE_ROWS,
   beanbag: BEANBAG_ROWS,
@@ -666,7 +732,12 @@ const STATIC_ROWS: Readonly<Record<Exclude<PropId, "desk" | "archive">, readonly
 const TILE_ROWS: Readonly<Partial<Record<TileId, readonly string[]>>> = {
   floor: FLOOR_ROWS,
   floorAlt: FLOOR_ALT_ROWS,
+  floorBoards: FLOOR_BOARDS_ROWS,
+  floorMosaic: FLOOR_MOSAIC_ROWS,
   wall: WALL_ROWS,
+  wallPaint: WALL_PAINT_ROWS,
+  wallPanel: WALL_PANEL_ROWS,
+  wallBrick: WALL_BRICK_ROWS,
   wallCap: WALL_CAP_ROWS,
   carpet: CARPET_ROWS,
   kitchen: KITCHEN_ROWS,

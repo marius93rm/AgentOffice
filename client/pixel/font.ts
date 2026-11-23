@@ -227,6 +227,64 @@ const SMALL: Readonly<Record<string, string>> = {
   [ICON.cross]: ".../#.#/.#./#.#/...",
 };
 
+function withAccents(base: Readonly<Record<string, string>>, small: boolean): Readonly<Record<string, string>> {
+  const glyphs = { ...base };
+  const accents = { à: "a", è: "e", é: "e", ì: "i", ò: "o", ù: "u" };
+  for (const [marked, plain] of Object.entries(accents)) {
+    for (const upper of [false, true]) {
+      const name = upper ? plain.toUpperCase() : plain;
+      if (small && upper && plain === "o") {
+        glyphs.Ò = ".#../.##./#..#/#..#/.##.";
+        continue;
+      }
+      if (small && upper && plain === "u") {
+        glyphs.Ù = ".#../#..#/#..#/#..#/.##.";
+        continue;
+      }
+      const rows = base[name]!.split("/");
+      const width = Math.max(rows[0]!.length, 3);
+      const padded = rows.map((row) => row.length === 1 ? `.${row}.` : row);
+      const grave = marked !== "é";
+      if (upper) padded.splice(name === "A" ? padded.length - 1 : padded.length - 3, 1);
+      else padded.shift();
+      if (plain === "i" && !upper && !small) padded[0] = ".".repeat(width);
+      const accent = `${grave ? "#.." : "..#"}`.padEnd(width, ".");
+      glyphs[upper ? marked.toUpperCase() : marked] = [accent, ...padded].join("/");
+    }
+  }
+  const european = [
+    ["ă", "a", "#..#"], ["â", "a", ".##."], ["î", "i", ".##."],
+    ["ä", "a", "#.#."], ["ö", "o", "#.#."], ["ü", "u", "#.#."],
+    ["á", "a", "..#."], ["í", "i", "..#."], ["ó", "o", "..#."], ["ú", "u", "..#."],
+    ["ñ", "n", "##.#"], ["č", "c", ".#.#"], ["š", "s", ".#.#"], ["ž", "z", ".#.#"],
+    ["ê", "e", ".##."], ["ô", "o", ".##."], ["û", "u", ".##."],
+  ] as const;
+  for (const [marked, plain, accent] of european) {
+    for (const uppercase of [false, true]) {
+      const name = uppercase ? plain.toUpperCase() : plain;
+      const rows = base[name]!.split("/");
+      const width = Math.max(uppercase && small ? 5 : 4, rows[0]!.length);
+      const body = uppercase ? rows.filter((_, index) => index !== rows.length - 2) : rows.slice(1);
+      const sheet = body.map((row) => {
+        if (!uppercase || !small || row.length < 3) return row.padEnd(width, ".");
+        return (row[0] + row.slice(1, -1).padEnd(width - 2, ".") + row.at(-1)).padEnd(width, ".");
+      });
+      glyphs[uppercase ? marked.toUpperCase() : marked] = [accent.padEnd(width, "."), ...sheet].join("/");
+    }
+  }
+  for (const [marked, plain, extension] of [["ș", "s", "..#"], ["ț", "t", ".#."], ["ç", "c", "##."]] as const) {
+    for (const uppercase of [false, true]) {
+      const rows = base[uppercase ? plain.toUpperCase() : plain]!.split("/");
+      const width = rows[0]!.length;
+      glyphs[uppercase ? marked.toUpperCase() : marked] = [...rows, extension.slice(0, width).padEnd(width, ".")].join("/");
+    }
+  }
+  return glyphs;
+}
+
+const REGULAR_GLYPHS = withAccents(REGULAR, false);
+const SMALL_GLYPHS = withAccents(SMALL, true);
+
 export interface FaceMetrics {
   /** Rows from the top of a capital to the baseline. */
   readonly ascent: number;
@@ -237,8 +295,8 @@ export interface FaceMetrics {
 }
 
 export const FACES: Readonly<Record<Face, FaceMetrics>> = {
-  regular: { ascent: FONT_ASCENT, descent: FONT_DESCENT, height: FONT_HEIGHT, glyphs: REGULAR },
-  small: { ascent: 5, descent: 1, height: 6, glyphs: SMALL },
+  regular: { ascent: FONT_ASCENT, descent: FONT_DESCENT, height: FONT_HEIGHT, glyphs: REGULAR_GLYPHS },
+  small: { ascent: 5, descent: 1, height: 6, glyphs: SMALL_GLYPHS },
 };
 
 export interface Glyph {
@@ -251,7 +309,7 @@ const parsed = new Map<string, Glyph>();
 
 /** Whether the faces draw `char`. They cover the same characters. */
 export function hasGlyph(char: string): boolean {
-  return Object.prototype.hasOwnProperty.call(REGULAR, char);
+  return Object.prototype.hasOwnProperty.call(REGULAR_GLYPHS, char);
 }
 
 /** The glyph for one character, or the fallback mark when the font has none. */
@@ -268,4 +326,4 @@ export function glyph(char: string, face: Face = "regular"): Glyph {
 }
 
 /** Every character the faces draw. */
-export const GLYPH_CHARS: readonly string[] = Object.keys(REGULAR);
+export const GLYPH_CHARS: readonly string[] = Object.keys(REGULAR_GLYPHS);

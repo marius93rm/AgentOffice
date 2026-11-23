@@ -17,12 +17,14 @@ import {
   deviceSnap,
   bubble,
   characterAnimation,
+  POSE_FRAME_MS,
   deskAnimation,
   emoteAnimation,
   stateIcon,
   emote,
   lookFor,
   officePalette,
+  roomPalette,
   prop,
   TILE as ART_TILE,
   CHARACTER_FRAMES,
@@ -32,6 +34,10 @@ import {
   type Facing,
 } from "./pixel";
 import { CHARACTER_HEIGHT, type Heading, type SpriteRole } from "./scene-model";
+import type { CharacterLook } from "./pixel/palette";
+import type { RoomLight } from "./lighting";
+import type { PetPose } from "./pet-model";
+import { catArt } from "./pixel/cat";
 
 /**
  * The only module of the scene that knows the sprite catalogue in
@@ -55,6 +61,8 @@ export type CharacterPose =
   | "stand"
   /** Mid-step. */
   | "walk"
+  /** Knees bent as the character sits at its desk. */
+  | "settle"
   /** Standing with a cup; the second frame lifts it. */
   | "drink"
   /** Standing, talking; the second frame opens the mouth and lifts a hand. */
@@ -62,7 +70,8 @@ export type CharacterPose =
   /** Standing; the second frame has both arms up. */
   | "stretch"
   /** Seated, eyes shut, nodding. */
-  | "doze";
+  | "doze"
+  | "read" | "board" | "plan" | "terminal" | "watch" | "frustrated" | "celebrate";
 
 export type ScreenState = "on" | "off" | "error";
 
@@ -100,6 +109,8 @@ function pose(wanted: CharacterPose, heading: Heading): { pose: ArtPose; facing:
       return { pose: "idle", facing: heading };
     case "walk":
       return { pose: "walk", facing: heading };
+    case "settle":
+      return { pose: "settle", facing: heading };
     case "drink":
     case "talk":
       // Drawn from the front and the sides; seen from behind it just stands.
@@ -108,6 +119,15 @@ function pose(wanted: CharacterPose, heading: Heading): { pose: ArtPose; facing:
       return { pose: "stretch", facing: heading === "up" ? "up" : "down" };
     case "doze":
       return { pose: "doze", facing: "down" };
+    case "read":
+    case "terminal":
+    case "watch":
+    case "plan":
+    case "board":
+      return { pose: wanted, facing: "up" };
+    case "frustrated":
+    case "celebrate":
+      return { pose: wanted, facing: "down" };
   }
 }
 
@@ -117,8 +137,7 @@ function pose(wanted: CharacterPose, heading: Heading): { pose: ArtPose; facing:
  * a screen that is busy, a bubble that bobs, a sleeper's Zs.
  */
 export const FRAME_MS = {
-  /** A walking step, and half of it is not a step. */
-  walk: 140,
+  walk: POSE_FRAME_MS.walk,
   /** Typing, and the beat activities are counted in. */
   beat: 280,
   /** A working screen scrolls a line. */
@@ -150,7 +169,7 @@ function Loop({
   const at = anchored(animation.still, scale, x, y);
   // A cycle may count frames past the strip's end, as a frame number always could: it wraps.
   const played = useMemo(
-    () => (cycle ? { frames: cycle.frames.map((frame) => frame % animation.frames), beatMs: cycle.beatMs } : null),
+    () => (cycle ? { ...cycle, frames: cycle.frames.map((frame) => frame % animation.frames) } : null),
     [cycle, animation.frames],
   );
   if (!played || animation.frames === 1 || played.frames.every((frame) => frame === played.frames[0])) {
@@ -181,6 +200,7 @@ export const CharacterSprite = memo(function CharacterSprite({
   paused = false,
   carry = null,
   lift = 0,
+  look,
 }: SpriteProps & {
   /** Decides the look; the same id is always the same person. */
   agentId: string;
@@ -194,15 +214,22 @@ export const CharacterSprite = memo(function CharacterSprite({
   carry?: "cup" | "book" | null;
   /** Art pixels to raise it, so a sitter rests on a seat. */
   lift?: number;
+  look?: CharacterLook;
 }) {
   const scale = artScale(tile);
-  const animation = characterAnimation({ role, look: lookFor(agentId), ...pose(wanted, heading), carry });
+  const animation = characterAnimation({ role, look: look ?? lookFor(agentId), ...pose(wanted, heading), carry }, lift === 0);
   return (
     <View style={{ width: tile, height: tile * CHARACTER_HEIGHT }}>
       <Loop theme={theme} animation={animation} scale={scale} cycle={cycle} paused={paused} x={tile / 2} y={tile * CHARACTER_HEIGHT - lift * scale} />
     </View>
   );
 });
+
+export function CatSprite({ theme, tile, pose, heading, still }: SpriteProps & { pose: PetPose; heading: "left" | "right"; still: boolean }) {
+  const art = catArt(pose, heading);
+  const cycle = useMemo(() => still ? null : loopOf(art.frames, pose === "walking" ? 125 : pose === "jumping" ? 110 : pose === "stretching" ? 500 : 900), [art, pose, still]);
+  return <Loop theme={theme} animation={art} scale={artScale(tile)} cycle={cycle} paused={still} x={0} y={0} />;
+}
 
 // What is finished bobs gently until it is read; a sleeper's Zs drift; the rest hold still.
 const EMOTE: Record<Emote, EmoteId> = { question: "question", alert: "fail", check: "readyBob", zzz: "zzz" };
@@ -405,14 +432,14 @@ export const FrameBackdrop = memo(function FrameBackdrop({
   );
 });
 
-export const RoomBackdrop = memo(function RoomBackdrop({ theme, tile, room }: SpriteProps & { room: Room }) {
+export const RoomBackdrop = memo(function RoomBackdrop({ theme, tile, room, light }: SpriteProps & { room: Room; light?: RoomLight }) {
   // The layout is rebuilt on every directory update; the floor only when the room changes shape.
   const key = roomKey(room);
   const bitmap = useMemo(() => roomArt(room), [key]);
   return (
     <Sprite
       sprite={bitmap}
-      palette={officePalette(theme)}
+      palette={roomPalette(theme, room.look.palette, light)}
       scale={artScale(tile)}
       style={{ position: "absolute", left: room.x * tile, top: room.y * tile }}
     />
